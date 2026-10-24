@@ -1,4 +1,3 @@
-
 /*
  * Module 4: welt_und_wetter.js
  * Factory: createWorldWeatherSystem()
