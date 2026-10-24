@@ -1,4 +1,3 @@
-
 /*
  * Module 8: kampf_animation.js
  * Dependencies: shared Babylon scene, player / weapon services.
