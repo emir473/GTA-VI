@@ -1,4 +1,3 @@
-
 /*
  * Module 5: welt_architektur.js
  * Factory: createWorldArchitectureSystem()
