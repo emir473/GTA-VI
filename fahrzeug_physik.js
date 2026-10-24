@@ -1,4 +1,3 @@
-
 /*
  * Module 10: fahrzeug_physik.js
  * Public services: vehicles, vehiclePhysics.
