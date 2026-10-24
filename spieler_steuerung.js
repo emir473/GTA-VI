@@ -1,4 +1,3 @@
-
 /*
  * Module 7: spieler_steuerung.js
  * Factory: createPlayerControlSystem()
