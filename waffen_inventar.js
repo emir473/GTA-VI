@@ -1,4 +1,3 @@
-
 /*
  * Module 9: waffen_inventar.js
  * Dependencies: Babylon.js scene, combat service, weather service.
