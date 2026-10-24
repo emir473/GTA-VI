@@ -1,4 +1,3 @@
-
 /*
  * Module 6: physik_wasser_tauchen.js
  * Factory: createWaterSimulationSystem()
