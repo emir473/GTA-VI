@@ -1,0 +1,893 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1,
+                 viewport-fit=cover">
+  <meta name="theme-color" content="#10151b">
+  <meta name="color-scheme" content="dark">
+  <title>Leonida — Open World Prototype</title>
+
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #10151b;
+      --panel: rgba(15, 20, 27, .93);
+      --panel-strong: rgba(8, 12, 17, .98);
+      --line: rgba(255, 255, 255, .12);
+      --muted: #9daab8;
+      --text: #f3f6f9;
+      --cyan: #69e3e8;
+      --orange: #f1a56e;
+      --red: #ff626c;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html,
+    body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont,
+                   "Segoe UI", sans-serif;
+      overscroll-behavior: none;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      color: var(--text);
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: .42;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 3px;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    #game-root {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      isolation: isolate;
+      background:
+        radial-gradient(ellipse at 73% 17%, rgba(82, 109, 124, .22), transparent 38%),
+        radial-gradient(ellipse at 19% 84%, rgba(174, 91, 58, .18), transparent 42%),
+        linear-gradient(145deg, #19232c 0%, #10151b 57%, #171c23 100%);
+    }
+
+    #render-canvas {
+      display: block;
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      outline: none;
+      touch-action: none;
+      background: transparent;
+    }
+
+    .scene-vignette {
+      pointer-events: none;
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      background:
+        linear-gradient(180deg, rgba(3, 6, 10, .42), transparent 22%,
+                        transparent 69%, rgba(3, 6, 10, .58)),
+        radial-gradient(ellipse at center, transparent 43%, rgba(0, 0, 0, .33) 100%);
+    }
+
+    .grain {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2;
+      opacity: .035;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.86' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.48'/%3E%3C/svg%3E");
+    }
+
+    .screen {
+      position: absolute;
+      inset: 0;
+      z-index: 12;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: calc(24px + var(--safe-top)) 22px
+               calc(24px + var(--safe-bottom));
+      background: rgba(7, 11, 16, .54);
+      backdrop-filter: blur(7px);
+      -webkit-backdrop-filter: blur(7px);
+    }
+
+    .boot-card,
+    .menu-card {
+      width: min(560px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 19px;
+      background: var(--panel);
+      box-shadow: 0 28px 100px rgba(0, 0, 0, .37);
+    }
+
+    .boot-card {
+      padding: clamp(23px, 5vw, 42px);
+    }
+
+    .eyebrow {
+      color: var(--cyan);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .22em;
+      text-transform: uppercase;
+    }
+
+    .brand {
+      margin: 13px 0 7px;
+      font-size: clamp(34px, 7vw, 55px);
+      line-height: .97;
+      font-weight: 900;
+      letter-spacing: -.06em;
+    }
+
+    .brand span {
+      color: var(--orange);
+    }
+
+    .subtitle {
+      max-width: 450px;
+      margin: 0;
+      color: #b0bdc9;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .progress-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-top: 34px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    #loading-percent {
+      color: var(--cyan);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .progress-track {
+      margin-top: 12px;
+      height: 5px;
+      border-radius: 99px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, .1);
+    }
+
+    #loading-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #46bfcf, #8ce7dc);
+      transition: width .22s ease;
+    }
+
+    #loading-details,
+    #boot-message {
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.65;
+      overflow-wrap: anywhere;
+    }
+
+    #boot-message.error {
+      color: #ff8f95;
+    }
+
+    .menu-card {
+      padding: clamp(24px, 5vw, 42px);
+    }
+
+    .menu-card h1 {
+      margin: 15px 0 9px;
+      font-size: clamp(34px, 6vw, 50px);
+      line-height: 1.03;
+      letter-spacing: -.05em;
+    }
+
+    .menu-card h1 span {
+      color: var(--orange);
+    }
+
+    .menu-copy {
+      margin: 0;
+      max-width: 465px;
+      color: #bdc6cf;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .status-block {
+      margin: 24px 0;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, .035);
+    }
+
+    .status-title {
+      margin: 0 0 7px;
+      color: var(--cyan);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+
+    #world-status,
+    #missing-modules {
+      font-size: 12px;
+      line-height: 1.7;
+      overflow-wrap: anywhere;
+    }
+
+    #world-status {
+      color: #d9e3eb;
+    }
+
+    #missing-modules {
+      margin-top: 5px;
+      color: var(--muted);
+    }
+
+    .button-stack {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .primary-button,
+    .secondary-button {
+      min-height: 49px;
+      padding: 12px 17px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: .025em;
+      transition: transform .12s ease, background .12s ease;
+    }
+
+    .primary-button {
+      border: 1px solid rgba(105, 227, 232, .45);
+      color: #071317;
+      background: var(--cyan);
+    }
+
+    .primary-button:not(:disabled):active,
+    .secondary-button:not(:disabled):active {
+      transform: scale(.985);
+    }
+
+    .secondary-button {
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, .045);
+    }
+
+    .menu-footnote {
+      margin: 17px 0 0;
+      color: #8f9ba7;
+      font-size: 11px;
+      line-height: 1.7;
+    }
+
+    #hud {
+      position: absolute;
+      inset: 0;
+      z-index: 5;
+      pointer-events: none;
+    }
+
+    .hud-panel {
+      border: 1px solid rgba(255,255,255,.13);
+      border-radius: 11px;
+      background: rgba(7, 11, 15, .66);
+      backdrop-filter: blur(7px);
+      -webkit-backdrop-filter: blur(7px);
+      box-shadow: 0 6px 25px rgba(0,0,0,.16);
+    }
+
+    #hud-top-left {
+      position: absolute;
+      top: calc(17px + var(--safe-top));
+      left: 18px;
+      min-width: 155px;
+      padding: 12px 14px;
+    }
+
+    .hud-label {
+      color: #aab7c4;
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+
+    #hud-money {
+      margin-top: 6px;
+      font-size: 21px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #hud-wanted {
+      display: flex;
+      gap: 5px;
+      margin-top: 8px;
+      color: #f7d67b;
+      letter-spacing: .09em;
+    }
+
+    #hud-top-right {
+      position: absolute;
+      top: calc(17px + var(--safe-top));
+      right: 18px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 9px;
+    }
+
+    .hud-pill {
+      padding: 8px 11px;
+      border: 1px solid rgba(255,255,255,.13);
+      border-radius: 9px;
+      background: rgba(7, 11, 15, .65);
+      color: #e5edf3;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .025em;
+    }
+
+    #touch-phone-button {
+      pointer-events: auto;
+      padding: 10px 14px;
+    }
+
+    #hud-bottom-left {
+      position: absolute;
+      left: 18px;
+      bottom: calc(18px + var(--safe-bottom));
+      width: 155px;
+      padding: 12px;
+    }
+
+    #minimap {
+      width: 100%;
+      height: auto;
+      display: block;
+      aspect-ratio: 1;
+      border-radius: 7px;
+      background: rgba(29, 38, 44, .9);
+    }
+
+    #minimap-caption {
+      margin-top: 8px;
+      color: #a8b4bf;
+      font-size: 9px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    #hud-bottom-right {
+      position: absolute;
+      right: 18px;
+      bottom: calc(18px + var(--safe-bottom));
+      padding: 12px 15px;
+      min-width: 115px;
+      text-align: right;
+    }
+
+    #hud-speed {
+      margin-top: 3px;
+      font-size: 30px;
+      font-weight: 850;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #hud-speed-unit {
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    #hud-gps {
+      position: absolute;
+      bottom: calc(25px + var(--safe-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      max-width: min(390px, 55vw);
+      padding: 11px 15px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(7, 11, 15, .72);
+      font-size: 11px;
+      line-height: 1.6;
+      text-align: center;
+    }
+
+    #touch-controls {
+      display: none;
+      pointer-events: none;
+      position: absolute;
+      inset: 0;
+    }
+
+    .touch-control {
+      pointer-events: auto;
+      position: absolute;
+      display: grid;
+      place-items: center;
+      width: 64px;
+      height: 64px;
+      border: 1px solid rgba(255,255,255,.24);
+      border-radius: 50%;
+      background: rgba(17, 25, 32, .59);
+      box-shadow: 0 6px 24px rgba(0,0,0,.16);
+      color: white;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #touch-move {
+      bottom: calc(100px + var(--safe-bottom));
+      left: 24px;
+      width: 110px;
+      height: 110px;
+    }
+
+    #touch-interact {
+      bottom: calc(103px + var(--safe-bottom));
+      right: 27px;
+    }
+
+    #touch-pause-button {
+      top: calc(68px + var(--safe-top));
+      right: 18px;
+      width: 46px;
+      height: 46px;
+    }
+
+    #smartphone-mount {
+      position: absolute;
+      inset: 0;
+      z-index: 30;
+      pointer-events: none;
+    }
+
+    #toast-region {
+      position: absolute;
+      z-index: 60;
+      top: calc(20px + var(--safe-top));
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      width: min(420px, calc(100vw - 30px));
+      pointer-events: none;
+    }
+
+    .toast {
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 10px;
+      padding: 12px 15px;
+      background: rgba(8, 13, 18, .94);
+      box-shadow: 0 9px 35px rgba(0,0,0,.25);
+      font-size: 12px;
+      line-height: 1.6;
+      animation: toast-in .15s ease-out;
+      overflow-wrap: anywhere;
+    }
+
+    .toast.error {
+      border-color: rgba(255,98,108,.45);
+    }
+
+    .toast.success {
+      border-color: rgba(105,227,232,.36);
+    }
+
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(-5px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    #pause-menu {
+      position: absolute;
+      inset: 0;
+      z-index: 25;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      background: rgba(4, 7, 11, .7);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+
+    .pause-card {
+      width: min(440px, 100%);
+      padding: 27px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--panel-strong);
+    }
+
+    .pause-card h2 {
+      margin: 0 0 7px;
+      font-size: 29px;
+      letter-spacing: -.04em;
+    }
+
+    .pause-card p {
+      margin: 0 0 20px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    #debug-panel {
+      position: absolute;
+      z-index: 80;
+      left: 15px;
+      top: 15px;
+      width: min(450px, calc(100vw - 30px));
+      max-height: min(58vh, 500px);
+      overflow: auto;
+      padding: 13px;
+      border: 1px solid rgba(105, 227, 232, .3);
+      border-radius: 10px;
+      background: rgba(4, 8, 12, .97);
+      color: #bbf6e9;
+      font: 11px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace;
+      pointer-events: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    #fatal-error {
+      position: absolute;
+      z-index: 100;
+      inset: 0;
+      overflow: auto;
+      padding: 30px;
+      background: #170c10;
+      color: #ffe9eb;
+    }
+
+    #fatal-error h1 {
+      color: #ff8f95;
+    }
+
+    #fatal-error pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 12px;
+    }
+
+    @media (hover: none), (pointer: coarse) {
+      #touch-controls {
+        display: block;
+      }
+
+      #hud-bottom-left {
+        bottom: calc(205px + var(--safe-bottom));
+        width: 122px;
+      }
+
+      #hud-bottom-right {
+        bottom: calc(205px + var(--safe-bottom));
+      }
+
+      #hud-gps {
+        bottom: calc(152px + var(--safe-bottom));
+        max-width: 58vw;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .screen {
+        padding-left: 15px;
+        padding-right: 15px;
+      }
+
+      .boot-card,
+      .menu-card {
+        border-radius: 15px;
+      }
+
+      #hud-top-left {
+        top: calc(12px + var(--safe-top));
+        left: 12px;
+        min-width: 123px;
+        padding: 9px 10px;
+      }
+
+      #hud-top-right {
+        top: calc(12px + var(--safe-top));
+        right: 12px;
+      }
+
+      #hud-money {
+        font-size: 17px;
+      }
+
+      #hud-top-right .hud-pill {
+        font-size: 10px;
+      }
+
+      #hud-bottom-left {
+        left: 12px;
+      }
+
+      #hud-bottom-right {
+        right: 12px;
+        min-width: 94px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main id="game-root">
+    <canvas id="render-canvas"
+            tabindex="0"
+            aria-label="Leonida 3D game world"></canvas>
+
+    <div class="scene-vignette"></div>
+    <div class="grain"></div>
+
+    <section id="boot-screen" class="screen" aria-live="polite">
+      <div class="boot-card">
+        <div class="eyebrow">Interactive world systems</div>
+        <div class="brand">LEONIDA<span>.</span></div>
+        <p class="subtitle">
+          Open-world simulation prototype. Initializing the graphics
+          runtime, interface and registered game systems.
+        </p>
+
+        <div class="progress-header">
+          <span id="loading-label">Initializing core</span>
+          <span id="loading-percent">0%</span>
+        </div>
+
+        <div class="progress-track" role="progressbar"
+             aria-label="Core initialization progress"
+             aria-valuemin="0" aria-valuemax="100"
+             aria-valuenow="0" id="loading-progress">
+          <div id="loading-bar"></div>
+        </div>
+
+        <p id="loading-details">Waiting for runtime initialization.</p>
+        <p id="boot-message"></p>
+      </div>
+    </section>
+
+    <section id="main-menu" class="screen" hidden>
+      <div class="menu-card">
+        <div class="eyebrow">Leonida State • Technical Prototype</div>
+        <h1>Beyond the <span>coast.</span></h1>
+        <p class="menu-copy">
+          A modular 3D world with a shared simulation state. Gameplay
+          starts only when the required world and gameplay systems are
+          registered and ready.
+        </p>
+
+        <div class="status-block">
+          <p class="status-title">System status</p>
+          <div id="world-status">Initializing.</div>
+          <div id="missing-modules"></div>
+        </div>
+
+        <div class="button-stack">
+          <button id="start-game" class="primary-button" disabled>
+            START WORLD
+          </button>
+          <button id="open-settings" class="secondary-button">
+            GRAPHICS & LANGUAGE
+          </button>
+          <button id="open-debug" class="secondary-button">
+            DEVELOPER DIAGNOSTICS
+          </button>
+        </div>
+
+        <p class="menu-footnote">
+          This prototype uses original procedural content and modular
+          simulation systems. Renderer initialization alone does not
+          mean that the full world, traffic, aircraft or vehicle physics
+          are already implemented.
+        </p>
+      </div>
+    </section>
+
+    <section id="hud" hidden aria-label="Game HUD">
+      <div id="hud-top-left" class="hud-panel">
+        <div class="hud-label">Available funds</div>
+        <div id="hud-money">$0</div>
+        <div id="hud-wanted" aria-label="Wanted level">☆☆☆☆☆</div>
+      </div>
+
+      <div id="hud-top-right">
+        <div id="hud-clock" class="hud-pill">--:--</div>
+        <div id="hud-weather" class="hud-pill">Weather unavailable</div>
+        <button id="touch-phone-button" class="hud-pill">
+          PHONE · M
+        </button>
+      </div>
+
+      <div id="hud-bottom-left" class="hud-panel">
+        <canvas id="minimap" width="256" height="256"
+                aria-label="World minimap"></canvas>
+        <div id="minimap-caption">Navigation offline</div>
+      </div>
+
+      <div id="hud-gps" hidden>
+        <span id="hud-gps-text">No active route</span>
+      </div>
+
+      <div id="hud-bottom-right" class="hud-panel">
+        <div class="hud-label">Vehicle speed</div>
+        <div id="hud-speed">0</div>
+        <div id="hud-speed-unit">KM/H</div>
+      </div>
+
+      <div id="touch-controls">
+        <button id="touch-move" class="touch-control"
+                aria-label="Movement control">MOVE</button>
+        <button id="touch-interact" class="touch-control"
+                aria-label="Interact">USE</button>
+        <button id="touch-pause-button" class="touch-control"
+                aria-label="Pause game">Ⅱ</button>
+      </div>
+    </section>
+
+    <section id="pause-menu" hidden aria-label="Pause menu">
+      <div class="pause-card">
+        <div class="eyebrow">Simulation state</div>
+        <h2>Paused</h2>
+        <p>
+          Simulation updates are suspended while the pause menu is open.
+          Rendering, interface events and save operations remain available.
+        </p>
+        <div class="button-stack">
+          <button id="resume-game" class="primary-button">
+            RESUME
+          </button>
+          <button id="save-game" class="secondary-button">
+            SAVE CURRENT STATE
+          </button>
+          <button id="return-menu" class="secondary-button">
+            RETURN TO MENU
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <div id="smartphone-mount"></div>
+    <div id="toast-region" role="status" aria-live="polite"></div>
+    <pre id="debug-panel" hidden></pre>
+
+    <section id="fatal-error" hidden role="alert">
+      <h1>Initialization failed</h1>
+      <p>The runtime could not complete a required initialization step.</p>
+      <pre id="fatal-error-details"></pre>
+    </section>
+  </main>
+
+  <script>
+    /*
+     * Loads the pinned Babylon.js UMD build before importing the native
+     * ES-module game runtime. Game modules never depend on script order
+     * beyond this explicitly awaited library initialization.
+     */
+    (() => {
+      const status = document.getElementById("loading-details");
+      const message = document.getElementById("boot-message");
+
+      window.__LEONIDA_BOOT_UI__ = {
+        progress(percent, label, detail) {
+          const p = Math.max(0, Math.min(100, Number(percent) || 0));
+          document.getElementById("loading-bar").style.width = `${p}%`;
+          document.getElementById("loading-percent").textContent =
+            `${Math.round(p)}%`;
+          document.getElementById("loading-progress")
+            .setAttribute("aria-valuenow", String(Math.round(p)));
+
+          if (label) {
+            document.getElementById("loading-label").textContent = label;
+          }
+          if (detail) status.textContent = detail;
+        },
+
+        fail(error) {
+          message.classList.add("error");
+          message.textContent =
+            error instanceof Error ? error.message : String(error);
+        }
+      };
+
+      const library = document.createElement("script");
+      library.src =
+        "https://cdn.jsdelivr.net/npm/babylonjs@9.32.0/babylon.js";
+      library.async = true;
+      library.crossOrigin = "anonymous";
+
+      library.onload = async () => {
+        if (!window.BABYLON) {
+          window.__LEONIDA_BOOT_UI__.fail(
+            "Babylon.js was loaded but the global runtime is unavailable."
+          );
+          return;
+        }
+
+        try {
+          await import("./loader.js");
+        } catch (error) {
+          console.error("Leonida module loader failed:", error);
+          window.__LEONIDA_BOOT_UI__.fail(error);
+        }
+      };
+
+      library.onerror = () => {
+        window.__LEONIDA_BOOT_UI__.fail(
+          "Could not download Babylon.js. Check the internet connection " +
+          "or serve the pinned library locally."
+        );
+      };
+
+      document.head.appendChild(library);
+    })();
+  </script>
+</body>
+</html>
