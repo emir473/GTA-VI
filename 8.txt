@@ -1,0 +1,1538 @@
+
+/*
+ * Module 8: kampf_animation.js
+ * Dependencies: shared Babylon scene, player / weapon services.
+ * Public service: combat.
+ *
+ * Ragdoll requires an explicitly registered physics adapter.
+ * Without one, incapacitated characters use a controlled fallback state.
+ */
+
+const COMBAT_ACTIONS = Object.freeze({
+  melee: {
+    windup: 0.19,
+    active: 0.12,
+    recovery: 0.34,
+    rangeM: 1.55,
+    halfAngleRad: Math.PI * 0.34,
+    damage: 18,
+    knockbackMps: 2.7,
+    staminaCost: 7
+  },
+
+  heavyMelee: {
+    windup: 0.39,
+    active: 0.18,
+    recovery: 0.58,
+    rangeM: 1.8,
+    halfAngleRad: Math.PI * 0.30,
+    damage: 32,
+    knockbackMps: 5.2,
+    staminaCost: 17
+  },
+
+  takedown: {
+    windup: 0.3,
+    active: 0.3,
+    recovery: 0.8,
+    rangeM: 1.25,
+    halfAngleRad: Math.PI * 0.3,
+    damage: 100,
+    knockbackMps: 0,
+    staminaCost: 20
+  }
+});
+
+const COMBAT_HIT_REACTIONS = Object.freeze({
+  head: "headHit",
+  torso: "bodyHit",
+  arm: "armHit",
+  leg: "legHit",
+  default: "bodyHit"
+});
+
+function combatClamp(value, min, max) {
+  return Math.max(min, Math.min(max, Number.isFinite(value) ? value : min));
+}
+
+function combatFinite(value, fallback = 0) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function combatSmoothstep(t) {
+  const v = combatClamp(t, 0, 1);
+  return v * v * (3 - 2 * v);
+}
+
+export async function createCombatAnimationSystem({
+  runtime,
+  scene,
+  camera,
+  services,
+  entities,
+  logger
+}) {
+  if (!runtime || !scene || !camera) {
+    throw new TypeError("Combat requires the shared runtime, scene and camera.");
+  }
+
+  const B = globalThis.BABYLON;
+  if (!B) throw new Error("Babylon.js is unavailable.");
+
+  const eventDisposers = [];
+  const serviceDisposers = [];
+  const combatants = new Map();
+  const activeAttacks = new Map();
+  const ragdollHandles = new Map();
+  const carriedBodies = new Map();
+  const coverStates = new Map();
+
+  let nextAttackId = 1;
+  let elapsed = 0;
+  let initialized = false;
+  let running = false;
+  let disposed = false;
+
+  const replayConfig = {
+    sampleInterval: 0.08,
+    maxSeconds: 24,
+    samples: [],
+    sampleAccumulator: 0,
+    replay: null,
+    recording: true
+  };
+
+  function getPlayerService() {
+    return services.get("player");
+  }
+
+  function characterNode(id) {
+    return scene.getTransformNodeByName(`character-root-${id}`) ??
+      scene.getMeshByName(`character-root-${id}`) ??
+      null;
+  }
+
+  function entityPosition(record) {
+    if (typeof record.getPosition === "function") {
+      const position = record.getPosition();
+      if (position) return position.clone
+        ? position.clone()
+        : new B.Vector3(position.x, position.y, position.z);
+    }
+
+    if (record.root?.getAbsolutePosition) {
+      return record.root.getAbsolutePosition().clone();
+    }
+
+    if (record.mesh?.getAbsolutePosition) {
+      return record.mesh.getAbsolutePosition().clone();
+    }
+
+    if (record.position) {
+      return record.position.clone
+        ? record.position.clone()
+        : new B.Vector3(
+            record.position.x,
+            record.position.y,
+            record.position.z
+          );
+    }
+
+    return null;
+  }
+
+  function entityForward(record) {
+    if (record.root) {
+      const direction = record.root.forward?.clone();
+      if (direction && direction.lengthSquared() > 0.001) {
+        direction.y = 0;
+        return direction.normalize();
+      }
+    }
+
+    const heading = combatFinite(record.heading, 0);
+
+    return new B.Vector3(
+      Math.sin(heading),
+      0,
+      Math.cos(heading)
+    );
+  }
+
+  function makeCombatant(definition) {
+    if (!definition?.id) {
+      throw new TypeError("A combatant requires a stable ID.");
+    }
+
+    if (combatants.has(definition.id)) {
+      throw new Error(`Combatant already registered: ${definition.id}`);
+    }
+
+    const maximumHealth = Math.max(
+      1,
+      combatFinite(definition.maxHealth, 100)
+    );
+
+    const record = {
+      id: definition.id,
+      type: definition.type ?? "npc",
+      faction: definition.faction ?? "civilian",
+
+      root: definition.root ?? null,
+      mesh: definition.mesh ?? null,
+      getPosition: definition.getPosition ?? null,
+      position: definition.position ?? null,
+      heading: combatFinite(definition.heading, 0),
+      animationGroups: [...(definition.animationGroups ?? [])],
+
+      health: combatClamp(
+        combatFinite(definition.health, maximumHealth),
+        0,
+        maximumHealth
+      ),
+
+      maxHealth: maximumHealth,
+      stamina: combatClamp(
+        combatFinite(definition.stamina, 100),
+        0,
+        100
+      ),
+
+      armor: combatClamp(
+        combatFinite(definition.armor, 0),
+        0,
+        100
+      ),
+
+      state: "neutral",
+      hitReaction: null,
+      incapacitated: false,
+      dead: false,
+
+      targetId: null,
+      coverId: null,
+      hostageTargetId: null,
+      carriedBy: null,
+
+      cooldownUntil: 0,
+      lastDamageAt: -Infinity,
+      lastAttackerId: null,
+
+      hitZones: definition.hitZones ?? null,
+      ragdollEnabled: false,
+
+      metadata: { ...(definition.metadata ?? {}) }
+    };
+
+    combatants.set(record.id, record);
+
+    return record;
+  }
+
+  function registerCombatant(definition) {
+    const record = makeCombatant(definition);
+
+    runtime.events.emit("combat:combatantRegistered", {
+      combatantId: record.id,
+      type: record.type,
+      faction: record.faction
+    });
+
+    return Object.freeze({
+      id: record.id,
+      get: () => combatants.get(record.id) ?? null,
+      dispose: () => unregisterCombatant(record.id)
+    });
+  }
+
+  function unregisterCombatant(id) {
+    const record = combatants.get(id);
+    if (!record) return false;
+
+    cancelAttack(id, "combatant-unregistered");
+    releaseFromCover(id);
+    releaseCarriedBody(id);
+
+    const ragdoll = ragdollHandles.get(id);
+
+    try {
+      ragdoll?.dispose?.();
+    } catch (error) {
+      logger.warn("Ragdoll cleanup failed.", error);
+    }
+
+    ragdollHandles.delete(id);
+    combatants.delete(id);
+
+    runtime.events.emit("combat:combatantUnregistered", {
+      combatantId: id
+    });
+
+    return true;
+  }
+
+  function getCombatant(id) {
+    return combatants.get(id) ?? null;
+  }
+
+  function registerDefaultPlayerCharacters() {
+    const player = getPlayerService();
+
+    for (const id of ["lucia", "jason"]) {
+      const profile = player?.getCharacter?.(id);
+      if (!profile || combatants.has(id)) continue;
+
+      registerCombatant({
+        id,
+        type: "player",
+        faction: "player",
+        root: characterNode(id),
+        position: profile.position,
+        getPosition: () => profile.position,
+        maxHealth: 100,
+        health: profile.health,
+        stamina: profile.stamina,
+        metadata: {
+          protagonist: true
+        }
+      });
+    }
+  }
+
+  /* --------------------------------------------------------------- */
+  /* Attack lifecycle                                                  */
+  /* --------------------------------------------------------------- */
+
+  function beginAttack(attackerId, attackType = "melee", options = {}) {
+    const attacker = getCombatant(attackerId);
+    const config = COMBAT_ACTIONS[attackType];
+
+    if (!attacker || !config) {
+      return { ok: false, reason: "invalid-attacker-or-action" };
+    }
+
+    if (attacker.dead || attacker.incapacitated) {
+      return { ok: false, reason: "attacker-incapacitated" };
+    }
+
+    if (activeAttacks.has(attackerId)) {
+      return { ok: false, reason: "attack-already-active" };
+    }
+
+    if (elapsed < attacker.cooldownUntil) {
+      return { ok: false, reason: "attack-on-cooldown" };
+    }
+
+    if (attacker.stamina < config.staminaCost) {
+      return { ok: false, reason: "insufficient-stamina" };
+    }
+
+    attacker.stamina -= config.staminaCost;
+
+    const attack = {
+      id: `combat-attack-${nextAttackId++}`,
+      attackerId,
+      targetId: options.targetId ?? null,
+      type: attackType,
+      config,
+      phase: "windup",
+      phaseElapsed: 0,
+      hitTargets: new Set(),
+      startedAt: elapsed,
+      metadata: {
+        weaponId: options.weaponId ?? null,
+        missionId: options.missionId ?? null
+      }
+    };
+
+    activeAttacks.set(attackerId, attack);
+    attacker.state = attackType === "takedown"
+      ? "takedown"
+      : "attacking";
+
+    playAnimation(attacker, attackType);
+
+    runtime.events.emit("combat:attackStarted", {
+      attackId: attack.id,
+      attackerId,
+      type: attackType,
+      targetId: attack.targetId
+    });
+
+    return { ok: true, attackId: attack.id };
+  }
+
+  function cancelAttack(attackerId, reason = "cancelled") {
+    const attack = activeAttacks.get(attackerId);
+    if (!attack) return false;
+
+    activeAttacks.delete(attackerId);
+
+    const attacker = getCombatant(attackerId);
+
+    if (attacker && !attacker.dead && !attacker.incapacitated) {
+      attacker.state = "neutral";
+    }
+
+    runtime.events.emit("combat:attackCancelled", {
+      attackId: attack.id,
+      attackerId,
+      reason
+    });
+
+    return true;
+  }
+
+  function canTarget(attacker, target, maxRange) {
+    if (!attacker || !target) return false;
+    if (target.id === attacker.id) return false;
+    if (target.dead || target.incapacitated || target.carriedBy) return false;
+    if (target.metadata.invulnerable === true) return false;
+
+    // Friendly-fire policy is explicit per combatant.
+    if (
+      attacker.faction === target.faction &&
+      attacker.metadata.friendlyFire !== true
+    ) {
+      return false;
+    }
+
+    const a = entityPosition(attacker);
+    const b = entityPosition(target);
+
+    if (!a || !b) return false;
+
+    const toTarget = b.subtract(a);
+    toTarget.y = 0;
+
+    const distance = toTarget.length();
+    if (distance > maxRange || distance < 0.05) return false;
+
+    const forward = entityForward(attacker);
+    const dot = B.Vector3.Dot(forward, toTarget.normalize());
+
+    return dot >= Math.cos(COMBAT_ACTIONS.melee.halfAngleRad);
+  }
+
+  function hasLineOfSight(from, to, targetId) {
+    const delta = to.subtract(from);
+    const distance = delta.length();
+
+    if (distance < 0.02) return true;
+
+    const ray = new B.Ray(
+      from,
+      delta.normalize(),
+      Math.max(0.01, distance - 0.12)
+    );
+
+    const hit = scene.pickWithRay(
+      ray,
+      mesh => {
+        if (!mesh || mesh.isDisposed()) return false;
+        if (!mesh.isEnabled() || !mesh.isVisible) return false;
+        if (mesh.metadata?.blocksPlayer === false) return false;
+        if (mesh.metadata?.isWaterSurface) return false;
+        if (mesh.metadata?.combatantId === targetId) return false;
+        if (mesh.metadata?.characterId === targetId) return false;
+        return mesh.isPickable !== false;
+      },
+      false
+    );
+
+    return !hit?.hit;
+  }
+
+  function performAttackHit(attack) {
+    const attacker = getCombatant(attack.attackerId);
+    if (!attacker) return;
+
+    const origin = entityPosition(attacker);
+    if (!origin) return;
+
+    origin.y += 1.0;
+
+    const forward = entityForward(attacker);
+    const candidates = [];
+
+    if (attack.targetId) {
+      const target = getCombatant(attack.targetId);
+      if (target) candidates.push(target);
+    } else {
+      for (const target of combatants.values()) {
+        if (canTarget(attacker, target, attack.config.rangeM)) {
+          candidates.push(target);
+        }
+      }
+    }
+
+    for (const target of candidates) {
+      if (attack.hitTargets.has(target.id)) continue;
+
+      if (!canTarget(attacker, target, attack.config.rangeM)) continue;
+
+      const targetPosition = entityPosition(target);
+      if (!targetPosition) continue;
+
+      const distance = B.Vector3.Distance(origin, targetPosition);
+
+      const targetPoint = targetPosition.add(
+        new B.Vector3(0, 0.95, 0)
+      );
+
+      if (!hasLineOfSight(origin, targetPoint, target.id)) continue;
+
+      // For takedowns, the target must already be vulnerable and close.
+      if (
+        attack.type === "takedown" &&
+        target.state !== "stunned" &&
+        target.state !== "surrendering" &&
+        target.metadata.takedownVulnerable !== true
+      ) {
+        continue;
+      }
+
+      attack.hitTargets.add(target.id);
+
+      applyDamage({
+        targetId: target.id,
+        attackerId: attacker.id,
+        damage: attack.config.damage,
+        hitZone: target.metadata.preferredHitZone ?? "torso",
+        source: attack.type,
+        impulse: forward.scale(attack.config.knockbackMps),
+        attackId: attack.id
+      });
+
+      runtime.events.emit("combat:meleeHit", {
+        attackId: attack.id,
+        attackerId: attacker.id,
+        targetId: target.id,
+        distanceM: distance,
+        attackType: attack.type
+      });
+    }
+  }
+
+  /* --------------------------------------------------------------- */
+  /* Damage, hit reaction and ragdoll adapter                          */
+  /* --------------------------------------------------------------- */
+
+  function applyDamage({
+    targetId,
+    attackerId = null,
+    damage,
+    hitZone = "torso",
+    source = "unknown",
+    impulse = null,
+    attackId = null
+  }) {
+    const target = getCombatant(targetId);
+
+    if (!target) {
+      return { ok: false, reason: "target-not-registered" };
+    }
+
+    if (target.dead || target.metadata.invulnerable === true) {
+      return { ok: false, reason: "target-unavailable" };
+    }
+
+    const amount = combatClamp(combatFinite(damage), 0, 10000);
+    const armorReduction = combatClamp(target.armor / 100, 0, 0.8);
+    const effectiveDamage = Math.max(
+      0,
+      amount * (1 - armorReduction)
+    );
+
+    target.health = Math.max(
+      0,
+      target.health - effectiveDamage
+    );
+
+    target.lastDamageAt = elapsed;
+    target.lastAttackerId = attackerId;
+    target.hitReaction = COMBAT_HIT_REACTIONS[hitZone] ??
+      COMBAT_HIT_REACTIONS.default;
+
+    const player = getPlayerService();
+    const playerCharacter = player?.getCharacter?.(targetId);
+
+    if (playerCharacter) {
+      playerCharacter.health = Math.max(
+        0,
+        combatFinite(playerCharacter.health, 100) - effectiveDamage
+      );
+    }
+
+    const hitPosition = entityPosition(target);
+
+    if (hitPosition && impulse) {
+      const adapter = services.get("physics");
+      const ragdoll = ragdollHandles.get(targetId);
+
+      if (
+        ragdoll?.applyImpulse &&
+        target.ragdollEnabled
+      ) {
+        ragdoll.applyImpulse(hitPosition, impulse);
+      } else if (adapter?.applyCharacterImpulse) {
+        adapter.applyCharacterImpulse(targetId, hitPosition, impulse);
+      }
+    }
+
+    runtime.events.emit("combat:hit", {
+      targetId,
+      attackerId,
+      attackId,
+      damage: effectiveDamage,
+      hitZone,
+      source,
+      healthRemaining: target.health,
+      position: hitPosition
+    });
+
+    if (target.health <= 0) {
+      target.dead = true;
+      target.incapacitated = true;
+      target.state = "dead";
+
+      enableRagdoll(targetId, {
+        reason: "lethal-damage",
+        impulse
+      });
+
+      runtime.events.emit("combat:knockout", {
+        targetId,
+        attackerId,
+        lethal: true,
+        position: hitPosition
+      });
+
+      runtime.events.emit("combat:death", {
+        targetId,
+        attackerId,
+        source,
+        position: hitPosition
+      });
+    } else if (
+      effectiveDamage >= 22 ||
+      hitZone === "head" ||
+      hitZone === "leg"
+    ) {
+      target.state = "stunned";
+
+      runtime.events.emit("combat:hitReaction", {
+        targetId,
+        hitZone,
+        reaction: target.hitReaction,
+        duration: hitZone === "head" ? 0.8 : 0.38
+      });
+    }
+
+    return {
+      ok: true,
+      targetId,
+      damage: effectiveDamage,
+      healthRemaining: target.health
+    };
+  }
+
+  function enableRagdoll(id, options = {}) {
+    const record = getCombatant(id);
+    if (!record) return { ok: false, reason: "unknown-combatant" };
+
+    const physics = services.get("physics");
+
+    if (typeof physics?.createCharacterRagdoll !== "function") {
+      // This is a fallback incapacitation state, not a simulated ragdoll.
+      record.ragdollEnabled = false;
+      record.state = record.dead ? "dead" : "incapacitated";
+
+      runtime.events.emit("combat:ragdollUnavailable", {
+        combatantId: id
+      });
+
+      return {
+        ok: false,
+        reason: "ragdoll-physics-adapter-unavailable"
+      };
+    }
+
+    try {
+      const handle = physics.createCharacterRagdoll({
+        characterId: id,
+        root: record.root,
+        mesh: record.mesh,
+        impulse: options.impulse ?? null,
+        reason: options.reason ?? "impact"
+      });
+
+      if (!handle || typeof handle.dispose !== "function") {
+        throw new TypeError(
+          "Physics adapter must return a disposable ragdoll handle."
+        );
+      }
+
+      ragdollHandles.get(id)?.dispose?.();
+      ragdollHandles.set(id, handle);
+      record.ragdollEnabled = true;
+      record.state = "ragdoll";
+
+      return { ok: true };
+    } catch (error) {
+      logger.error("Ragdoll creation failed.", error);
+
+      record.ragdollEnabled = false;
+      record.state = "incapacitated";
+
+      return {
+        ok: false,
+        reason: "ragdoll-creation-failed",
+        error: error.message
+      };
+    }
+  }
+
+  function recoverFromRagdoll(id) {
+    const record = getCombatant(id);
+    if (!record || record.dead) return false;
+
+    const handle = ragdollHandles.get(id);
+
+    try {
+      handle?.disable?.();
+      handle?.dispose?.();
+    } catch (error) {
+      logger.warn("Ragdoll recovery failed.", error);
+    }
+
+    ragdollHandles.delete(id);
+    record.ragdollEnabled = false;
+    record.incapacitated = false;
+    record.state = "neutral";
+
+    runtime.events.emit("combat:ragdollRecovered", {
+      combatantId: id
+    });
+
+    return true;
+  }
+
+  /* --------------------------------------------------------------- */
+  /* Animation controller                                              */
+  /* --------------------------------------------------------------- */
+
+  const ANIMATION_NAME_MAP = Object.freeze({
+    idle: ["idle", "standing"],
+    walk: ["walk", "walking"],
+    run: ["run", "jog", "running"],
+    sprint: ["sprint", "sprinting"],
+    melee: ["melee", "punch", "attack"],
+    heavyMelee: ["heavy", "strong", "attack_heavy"],
+    takedown: ["takedown", "finisher"],
+    cover: ["cover", "crouch_cover"],
+    aim: ["aim", "weapon_aim"],
+    hitReaction: ["hit", "reaction"],
+    dead: ["dead", "death", "fall"],
+    carry: ["carry", "body_carry"],
+    climb: ["climb", "climbing"]
+  });
+
+  function playAnimation(record, semanticState) {
+    const groups = record.animationGroups;
+
+    if (!groups.length) {
+      runtime.events.emit("combat:animationRequested", {
+        combatantId: record.id,
+        state: semanticState
+      });
+
+      return false;
+    }
+
+    const aliases = ANIMATION_NAME_MAP[semanticState] ??
+      [semanticState.toLowerCase()];
+
+    const selected = groups.find(group => {
+      const name = String(group.name ?? "").toLowerCase();
+      return aliases.some(alias => name.includes(alias));
+    });
+
+    if (!selected) {
+      runtime.events.emit("combat:animationMissing", {
+        combatantId: record.id,
+        state: semanticState,
+        availableGroups: groups.map(group => group.name)
+      });
+
+      return false;
+    }
+
+    try {
+      for (const group of groups) {
+        if (group === selected) {
+          if (!group.isPlaying) group.start(true);
+          group.setWeightForAllAnimatables?.(1);
+        } else if (group.isPlaying) {
+          group.setWeightForAllAnimatables?.(0);
+          group.stop();
+        }
+      }
+
+      return true;
+    } catch (error) {
+      logger.warn("Animation transition failed.", error);
+      return false;
+    }
+  }
+
+  function registerAnimations(id, animationGroups) {
+    const record = getCombatant(id);
+
+    if (!record || !Array.isArray(animationGroups)) {
+      return { ok: false, reason: "invalid-combatant-or-groups" };
+    }
+
+    record.animationGroups = animationGroups.filter(
+      group => group && typeof group.start === "function"
+    );
+
+    return {
+      ok: true,
+      groups: record.animationGroups.length
+    };
+  }
+
+  /* --------------------------------------------------------------- */
+  /* Cover system                                                      */
+  /* --------------------------------------------------------------- */
+
+  function findCover(id, maxDistance = 3.2) {
+    const record = getCombatant(id);
+    const position = record && entityPosition(record);
+
+    if (!record || !position) {
+      return { ok: false, reason: "invalid-character-position" };
+    }
+
+    const forward = entityForward(record);
+    const candidates = [
+      forward,
+      new B.Vector3(forward.z, 0, -forward.x),
+      new B.Vector3(-forward.z, 0, forward.x),
+      forward.scale(-1)
+    ];
+
+    let best = null;
+
+    for (const direction of candidates) {
+      const ray = new B.Ray(
+        position.add(new B.Vector3(0, 1.1, 0)),
+        direction.normalize(),
+        maxDistance
+      );
+
+      const hit = scene.pickWithRay(
+        ray,
+        mesh =>
+          mesh.isEnabled() &&
+          mesh.isVisible &&
+          mesh.isPickable !== false &&
+          (mesh.metadata?.isCover === true ||
+           mesh.metadata?.blocksPlayer === true)
+      );
+
+      if (!hit?.hit || !hit.pickedPoint) continue;
+
+      const normal = hit.getNormal(true, true);
+      if (!normal) continue;
+
+      // A wall-like surface must have a near-horizontal normal.
+      if (Math.abs(normal.y) > 0.42) continue;
+
+      const candidate = {
+        id: hit.pickedMesh?.metadata?.coverId ??
+          hit.pickedMesh?.uniqueId ??
+          `cover-${hit.pickedPoint.x}-${hit.pickedPoint.z}`,
+        mesh: hit.pickedMesh,
+        point: hit.pickedPoint.clone(),
+        normal: normal.clone(),
+        distanceM: hit.distance
+      };
+
+      if (!best || candidate.distanceM < best.distanceM) {
+        best = candidate;
+      }
+    }
+
+    if (!best) {
+      return { ok: false, reason: "no-cover-surface" };
+    }
+
+    return { ok: true, cover: best };
+  }
+
+  function enterCover(id, requestedCover = null) {
+    const record = getCombatant(id);
+    if (!record || record.dead || record.incapacitated) {
+      return { ok: false, reason: "character-unavailable" };
+    }
+
+    const result = requestedCover
+      ? { ok: true, cover: requestedCover }
+      : findCover(id);
+
+    if (!result.ok) return result;
+
+    const cover = result.cover;
+
+    coverStates.set(id, {
+      coverId: cover.id,
+      point: cover.point.clone(),
+      normal: cover.normal.clone(),
+      mesh: cover.mesh ?? null,
+      enteredAt: elapsed
+    });
+
+    record.coverId = cover.id;
+    record.state = "inCover";
+
+    runtime.events.emit("combat:coverEntered", {
+      characterId: id,
+      coverId: cover.id,
+      position: cover.point.clone()
+    });
+
+    playAnimation(record, "cover");
+
+    return { ok: true, coverId: cover.id };
+  }
+
+  function moveAlongCover(id, amountM) {
+    const record = getCombatant(id);
+    const cover = coverStates.get(id);
+
+    if (!record || !cover || !entityPosition(record)) {
+      return { ok: false, reason: "not-in-cover" };
+    }
+
+    const direction = new B.Vector3(
+      cover.normal.z,
+      0,
+      -cover.normal.x
+    );
+
+    const position = entityPosition(record).add(
+      direction.scale(combatClamp(amountM, -1.2, 1.2))
+    );
+
+    const ray = new B.Ray(
+      position.add(new B.Vector3(0, 1, 0)),
+      cover.normal.scale(-1),
+      1.3
+    );
+
+    const hit = scene.pickWithRay(
+      ray,
+      mesh => mesh === cover.mesh
+    );
+
+    if (!hit?.hit) {
+      releaseFromCover(id);
+      return {
+        ok: false,
+        reason: "cover-surface-ended"
+      };
+    }
+
+    if (record.root) {
+      record.root.position.copyFrom(position);
+    }
+
+    if (record.position?.copyFrom) {
+      record.position.copyFrom(position);
+    } else if (record.position) {
+      Object.assign(record.position, {
+        x: position.x,
+        y: position.y,
+        z: position.z
+      });
+    }
+
+    return { ok: true, position };
+  }
+
+  function releaseFromCover(id) {
+    const cover = coverStates.get(id);
+    const record = getCombatant(id);
+
+    if (!cover) return false;
+
+    coverStates.delete(id);
+
+    if (record) {
+      record.coverId = null;
+
+      if (!record.dead && !record.incapacitated) {
+        record.state = "neutral";
+      }
+    }
+
+    runtime.events.emit("combat:coverExited", {
+      characterId: id,
+      coverId: cover.coverId
+    });
+
+    return true;
+  }
+
+  /* --------------------------------------------------------------- */
+  /* Hostage / body carrying                                          */
+  /* --------------------------------------------------------------- */
+
+  function setHostage(holderId, targetId) {
+    const holder = getCombatant(holderId);
+    const target = getCombatant(targetId);
+
+    if (!holder || !target || holderId === targetId) {
+      return { ok: false, reason: "invalid-participants" };
+    }
+
+    if (holder.dead || holder.incapacitated || target.dead) {
+      return { ok: false, reason: "participant-unavailable" };
+    }
+
+    if (target.state !== "stunned" &&
+        target.metadata.takedownVulnerable !== true) {
+      return { ok: false, reason: "target-not-subdued" };
+    }
+
+    const a = entityPosition(holder);
+    const b = entityPosition(target);
+
+    if (!a || !b || B.Vector3.Distance(a, b) > 1.45) {
+      return { ok: false, reason: "out-of-range" };
+    }
+
+    holder.hostageTargetId = targetId;
+    holder.state = "holdingHostage";
+    target.state = "hostage";
+    target.incapacitated = true;
+
+    runtime.events.emit("combat:hostageStarted", {
+      holderId,
+      targetId
+    });
+
+    return { ok: true };
+  }
+
+  function releaseHostage(holderId, options = {}) {
+    const holder = getCombatant(holderId);
+    if (!holder?.hostageTargetId) {
+      return { ok: false, reason: "no-hostage" };
+    }
+
+    const target = getCombatant(holder.hostageTargetId);
+    const targetId = holder.hostageTargetId;
+
+    holder.hostageTargetId = null;
+    holder.state = "neutral";
+
+    if (target) {
+      target.incapacitated = options.subdued === true;
+      target.state = options.subdued ? "stunned" : "neutral";
+    }
+
+    runtime.events.emit("combat:hostageReleased", {
+      holderId,
+      targetId,
+      subdued: options.subdued === true
+    });
+
+    return { ok: true, targetId };
+  }
+
+  function carryBody(carrierId, targetId) {
+    const carrier = getCombatant(carrierId);
+    const target = getCombatant(targetId);
+
+    if (!carrier || !target || carrierId === targetId) {
+      return { ok: false, reason: "invalid-participants" };
+    }
+
+    if (!target.dead && !target.incapacitated) {
+      return { ok: false, reason: "target-not-incapacitated" };
+    }
+
+    if (target.carriedBy) {
+      return { ok: false, reason: "already-carried" };
+    }
+
+    if (carrier.metadata.carryingBody || carrier.dead) {
+      return { ok: false, reason: "carrier-unavailable" };
+    }
+
+    const a = entityPosition(carrier);
+    const b = entityPosition(target);
+
+    if (!a || !b || B.Vector3.Distance(a, b) > 1.8) {
+      return { ok: false, reason: "out-of-range" };
+    }
+
+    const anchor = new B.TransformNode(
+      `body-carry-anchor-${carrierId}-${targetId}`,
+      scene
+    );
+
+    anchor.parent = carrier.root ?? null;
+
+    anchor.position.set(0.15, 0.45, -0.62);
+
+    if (target.root) {
+      target.root.parent = anchor;
+      target.root.position.set(0, 0, 0);
+      target.root.rotation.set(Math.PI / 2, 0, 0);
+    } else {
+      anchor.dispose();
+      return { ok: false, reason: "target-root-unavailable" };
+    }
+
+    target.carriedBy = carrierId;
+    carrier.metadata.carryingBody = targetId;
+    carrier.state = "carryingBody";
+    target.state = "beingCarried";
+
+    carriedBodies.set(targetId, {
+      carrierId,
+      targetId,
+      anchor,
+      previousParent: null,
+      lastWorldPosition: b.clone()
+    });
+
+    runtime.events.emit("combat:bodyPickedUp", {
+      carrierId,
+      targetId
+    });
+
+    playAnimation(carrier, "carry");
+
+    return { ok: true };
+  }
+
+  function releaseCarriedBody(carrierOrTargetId, options = {}) {
+    let targetId = carriedBodies.has(carrierOrTargetId)
+      ? carrierOrTargetId
+      : null;
+
+    if (!targetId) {
+      targetId = [...carriedBodies.values()].find(
+        record => record.carrierId === carrierOrTargetId
+      )?.targetId ?? null;
+    }
+
+    if (!targetId) return false;
+
+    const carrying = carriedBodies.get(targetId);
+    const carrier = getCombatant(carrying.carrierId);
+    const target = getCombatant(targetId);
+
+    const position = carrying.anchor.getAbsolutePosition().clone();
+
+    if (target?.root) {
+      target.root.parent = null;
+      target.root.position.copyFrom(position);
+      target.root.rotation.set(0, 0, 0);
+    }
+
+    carrying.anchor.dispose();
+    carriedBodies.delete(targetId);
+
+    if (carrier) {
+      delete carrier.metadata.carryingBody;
+
+      if (!carrier.dead && !carrier.incapacitated) {
+        carrier.state = "neutral";
+      }
+    }
+
+    if (target) {
+      target.carriedBy = null;
+      target.state = target.dead ? "dead" : "incapacitated";
+    }
+
+    runtime.events.emit("combat:bodyDropped", {
+      carrierId: carrying.carrierId,
+      targetId,
+      position,
+      hidden: options.hidden === true
+    });
+
+    return true;
+  }
+
+  /* --------------------------------------------------------------- */
+  /* Replay recorder and director camera                              */
+  /* --------------------------------------------------------------- */
+
+  function recordReplaySample() {
+    const player = getPlayerService();
+    const id = player?.getActiveCharacterId?.();
+    const character = getCombatant(id);
+
+    if (!character) return;
+
+    const position = entityPosition(character);
+    if (!position) return;
+
+    replayConfig.samples.push({
+      t: elapsed,
+      characterId: id,
+      position: position.clone(),
+      heading: character.heading,
+      cameraPosition: camera.position.clone(),
+      cameraTarget: camera.getTarget().clone()
+    });
+
+    const minimumTime = elapsed - replayConfig.maxSeconds;
+
+    while (
+      replayConfig.samples.length &&
+      replayConfig.samples[0].t < minimumTime
+    ) {
+      replayConfig.samples.shift();
+    }
+  }
+
+  function startReplay(options = {}) {
+    if (replayConfig.replay) {
+      return { ok: false, reason: "replay-already-running" };
+    }
+
+    if (replayConfig.samples.length < 2) {
+      return { ok: false, reason: "insufficient-recorded-samples" };
+    }
+
+    const end = replayConfig.samples.length - 1;
+    const requestedSeconds = combatClamp(
+      combatFinite(options.seconds, 8),
+      1,
+      replayConfig.maxSeconds
+    );
+
+    const endTime = replayConfig.samples[end].t;
+    const startTime = Math.max(
+      replayConfig.samples[0].t,
+      endTime - requestedSeconds
+    );
+
+    replayConfig.replay = {
+      startTime,
+      endTime,
+      cursor: startTime,
+      speed: combatClamp(combatFinite(options.speed, 0.4), 0.05, 1),
+      savedCameraPosition: camera.position.clone(),
+      savedCameraTarget: camera.getTarget().clone(),
+      finished: false
+    };
+
+    runtime.events.emit("replay:started", {
+      startTime,
+      endTime,
+      speed: replayConfig.replay.speed
+    });
+
+    return { ok: true, startTime, endTime };
+  }
+
+  function interpolateReplaySample(time) {
+    const samples = replayConfig.samples;
+
+    if (!samples.length) return null;
+
+    let upper = samples.findIndex(sample => sample.t >= time);
+
+    if (upper < 0) upper = samples.length - 1;
+    if (upper === 0) return samples[0];
+
+    const a = samples[upper - 1];
+    const b = samples[upper];
+
+    const t = combatClamp(
+      (time - a.t) / Math.max(0.0001, b.t - a.t),
+      0,
+      1
+    );
+
+    return {
+      t: time,
+      characterId: b.characterId,
+      position: B.Vector3.Lerp(a.position, b.position, t),
+      heading: a.heading + (b.heading - a.heading) * t,
+      cameraPosition: B.Vector3.Lerp(
+        a.cameraPosition,
+        b.cameraPosition,
+        t
+      ),
+      cameraTarget: B.Vector3.Lerp(
+        a.cameraTarget,
+        b.cameraTarget,
+        t
+      )
+    };
+  }
+
+  function stopReplay() {
+    const replay = replayConfig.replay;
+    if (!replay) return false;
+
+    camera.position.copyFrom(replay.savedCameraPosition);
+    camera.setTarget(replay.savedCameraTarget);
+
+    replayConfig.replay = null;
+
+    runtime.events.emit("replay:stopped", {});
+    return true;
+  }
+
+  function updateReplay(dt) {
+    const replay = replayConfig.replay;
+    if (!replay) return;
+
+    replay.cursor += dt * replay.speed;
+
+    const sample = interpolateReplaySample(replay.cursor);
+
+    if (sample) {
+      const offset = new B.Vector3(
+        Math.sin(sample.heading + 0.55) * 4.5,
+        2.2,
+        Math.cos(sample.heading + 0.55) * 4.5
+      );
+
+      camera.position.copyFrom(sample.position.add(offset));
+      camera.setTarget(
+        sample.position.add(new B.Vector3(0, 1.0, 0))
+      );
+    }
+
+    if (replay.cursor >= replay.endTime) {
+      stopReplay();
+    }
+  }
+
+  /* --------------------------------------------------------------- */
+  /* Lifecycle                                                         */
+  /* --------------------------------------------------------------- */
+
+  async function initialize() {
+    if (initialized) return { ok: true };
+
+    initialized = true;
+
+    registerDefaultPlayerCharacters();
+
+    serviceDisposers.push(runtime.services.register("combat", {
+      registerCombatant,
+      unregisterCombatant,
+      getCombatant,
+
+      beginAttack,
+      cancelAttack,
+      applyDamage,
+
+      enableRagdoll,
+      recoverFromRagdoll,
+
+      playAnimation,
+      registerAnimations,
+
+      findCover,
+      enterCover,
+      moveAlongCover,
+      releaseFromCover,
+
+      setHostage,
+      releaseHostage,
+      carryBody,
+      releaseCarriedBody,
+
+      startReplay,
+      stopReplay,
+
+      getSnapshot: () => ({
+        combatants: combatants.size,
+        activeAttacks: activeAttacks.size,
+        ragdolls: ragdollHandles.size,
+        bodiesCarried: carriedBodies.size,
+        replaySamples: replayConfig.samples.length,
+        replayActive: Boolean(replayConfig.replay)
+      })
+    }));
+
+    eventDisposers.push(
+      runtime.events.on("player:characterChanged", () => {
+        registerDefaultPlayerCharacters();
+      })
+    );
+
+    eventDisposers.push(
+      runtime.events.on("combat:hit", payload => {
+        const target = getCombatant(payload.targetId);
+        if (target) playAnimation(target, "hitReaction");
+      })
+    );
+
+    eventDisposers.push(
+      runtime.events.on("combat:death", payload => {
+        const target = getCombatant(payload.targetId);
+        if (target) playAnimation(target, "dead");
+      })
+    );
+
+    logger.info("Combat and animation system initialized.");
+
+    return { ok: true };
+  }
+
+  function start() {
+    running = true;
+    return { ok: true };
+  }
+
+  function update(context) {
+    if (!initialized || !running || disposed) return;
+
+    const dt = combatClamp(
+      combatFinite(context.simulationDeltaSeconds ?? context.gameDeltaSeconds),
+      0,
+      0.1
+    );
+
+    elapsed += dt;
+
+    for (const [attackerId, attack] of activeAttacks) {
+      const attacker = getCombatant(attackerId);
+
+      if (!attacker || attacker.dead || attacker.incapacitated) {
+        cancelAttack(attackerId, "attacker-state-invalid");
+        continue;
+      }
+
+      attack.phaseElapsed += dt;
+
+      if (
+        attack.phase === "windup" &&
+        attack.phaseElapsed >= attack.config.windup
+      ) {
+        attack.phase = "active";
+        attack.phaseElapsed = 0;
+
+        runtime.events.emit("combat:attackActive", {
+          attackId: attack.id,
+          attackerId
+        });
+      }
+
+      if (
+        attack.phase === "active" &&
+        attack.phaseElapsed <= attack.config.active
+      ) {
+        performAttackHit(attack);
+      } else if (
+        attack.phase === "active" &&
+        attack.phaseElapsed > attack.config.active
+      ) {
+        attack.phase = "recovery";
+        attack.phaseElapsed = 0;
+      }
+
+      if (
+        attack.phase === "recovery" &&
+        attack.phaseElapsed >= attack.config.recovery
+      ) {
+        activeAttacks.delete(attackerId);
+
+        attacker.cooldownUntil = elapsed + 0.12;
+
+        if (!attacker.dead && !attacker.incapacitated) {
+          attacker.state = "neutral";
+        }
+
+        runtime.events.emit("combat:attackCompleted", {
+          attackId: attack.id,
+          attackerId,
+          targetsHit: [...attack.hitTargets]
+        });
+      }
+    }
+
+    replayConfig.sampleAccumulator += dt;
+
+    if (
+      replayConfig.recording &&
+      replayConfig.sampleAccumulator >= replayConfig.sampleInterval
+    ) {
+      replayConfig.sampleAccumulator %= replayConfig.sampleInterval;
+      recordReplaySample();
+    }
+
+    updateReplay(dt);
+
+    for (const [targetId, carried] of carriedBodies) {
+      if (!carried.anchor || carried.anchor.isDisposed()) {
+        carriedBodies.delete(targetId);
+      }
+    }
+  }
+
+  function stop() {
+    running = false;
+    for (const id of activeAttacks.keys()) {
+      cancelAttack(id, "system-stopped");
+    }
+    stopReplay();
+    return { ok: true };
+  }
+
+  function dispose() {
+    if (disposed) return;
+
+    disposed = true;
+    running = false;
+
+    stopReplay();
+
+    for (const off of eventDisposers.splice(0)) {
+      try { off(); } catch {}
+    }
+
+    for (const off of serviceDisposers.splice(0)) {
+      try { off(); } catch {}
+    }
+
+    for (const handle of ragdollHandles.values()) {
+      try { handle.dispose?.(); } catch {}
+    }
+
+    for (const carried of carriedBodies.values()) {
+      try { carried.anchor.dispose(); } catch {}
+    }
+
+    activeAttacks.clear();
+    ragdollHandles.clear();
+    carriedBodies.clear();
+    coverStates.clear();
+    combatants.clear();
+    replayConfig.samples.length = 0;
+  }
+
+  return Object.freeze({
+    initialize,
+    start,
+    update,
+    stop,
+    dispose
+  });
+}
