@@ -1,4 +1,3 @@
-
 /*
  * Module: ui_smartphone.js
  * Responsibility: interactive in-game phone, application navigation,
