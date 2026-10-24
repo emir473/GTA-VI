@@ -1,4 +1,3 @@
-
 /*
  * Module: engine_grafik.js
  * Responsibility: renderer creation, shared scene, camera, lighting,
