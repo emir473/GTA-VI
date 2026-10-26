@@ -1,0 +1,3044 @@
+/*
+ * Module 10: fahrzeug_physik.js
+ * Public services: vehicles, vehiclePhysics.
+ *
+ * Four-wheel suspension raycasts, torque curves, gearbox, traction,
+ * slip, damage, fuel, theft, trailers and vehicle delivery.
+ * No independent Babylon engine or Scene is created.
+ */
+
+const VEHICLE_CLASSES = Object.freeze({
+  sedan: {
+    massKg: 1560,
+    wheelbaseM: 2.72,
+    trackWidthM: 1.58,
+    lengthM: 4.72,
+    widthM: 1.82,
+    heightM: 1.45,
+    wheelRadiusM: 0.335,
+    suspensionTravelM: 0.34,
+    springRateNpm: 31000,
+    damperNspm: 3400,
+    steeringMaxRad: 0.53,
+    maxSteeringSpeedMps: 18,
+    dragCoefficient: 0.29,
+    frontalAreaM2: 2.15,
+    maxRpm: 6500,
+    idleRpm: 780,
+    peakTorqueNm: 260,
+    maxPowerW: 125000,
+    gears: [3.7, 2.1, 1.4, 1.0, 0.82, 0.68],
+    finalDrive: 3.55,
+    drive: "fwd",
+    tireGrip: 1.0,
+    brakeTorqueNm: 4800,
+    fuelCapacityL: 58,
+    maxSpeedMps: 57,
+    color: "#526a7a"
+  },
+
+  coupe: {
+    massKg: 1470,
+    wheelbaseM: 2.64,
+    trackWidthM: 1.55,
+    lengthM: 4.52,
+    widthM: 1.86,
+    heightM: 1.31,
+    wheelRadiusM: 0.34,
+    suspensionTravelM: 0.29,
+    springRateNpm: 37000,
+    damperNspm: 4100,
+    steeringMaxRad: 0.49,
+    maxSteeringSpeedMps: 21,
+    dragCoefficient: 0.27,
+    frontalAreaM2: 2.04,
+    maxRpm: 7200,
+    idleRpm: 850,
+    peakTorqueNm: 315,
+    maxPowerW: 205000,
+    gears: [3.1, 2.05, 1.52, 1.19, 0.95, 0.78],
+    finalDrive: 3.7,
+    drive: "rwd",
+    tireGrip: 1.14,
+    brakeTorqueNm: 5700,
+    fuelCapacityL: 62,
+    maxSpeedMps: 82,
+    color: "#a54b40"
+  },
+
+  sports: {
+    massKg: 1380,
+    wheelbaseM: 2.61,
+    trackWidthM: 1.62,
+    lengthM: 4.45,
+    widthM: 1.94,
+    heightM: 1.23,
+    wheelRadiusM: 0.35,
+    suspensionTravelM: 0.22,
+    springRateNpm: 48000,
+    damperNspm: 5200,
+    steeringMaxRad: 0.47,
+    maxSteeringSpeedMps: 24,
+    dragCoefficient: 0.25,
+    frontalAreaM2: 1.98,
+    maxRpm: 7900,
+    idleRpm: 900,
+    peakTorqueNm: 395,
+    maxPowerW: 335000,
+    gears: [3.0, 2.15, 1.56, 1.22, 0.97, 0.81, 0.69],
+    finalDrive: 3.45,
+    drive: "rwd",
+    tireGrip: 1.26,
+    brakeTorqueNm: 7100,
+    fuelCapacityL: 64,
+    maxSpeedMps: 96,
+    color: "#24685b"
+  },
+
+  taxi: {
+    massKg: 1740,
+    wheelbaseM: 2.92,
+    trackWidthM: 1.62,
+    lengthM: 5.02,
+    widthM: 1.91,
+    heightM: 1.53,
+    wheelRadiusM: 0.34,
+    suspensionTravelM: 0.40,
+    springRateNpm: 34000,
+    damperNspm: 3800,
+    steeringMaxRad: 0.50,
+    maxSteeringSpeedMps: 16,
+    dragCoefficient: 0.32,
+    frontalAreaM2: 2.35,
+    maxRpm: 6000,
+    idleRpm: 750,
+    peakTorqueNm: 285,
+    maxPowerW: 148000,
+    gears: [3.6, 2.15, 1.43, 1.0, 0.75],
+    finalDrive: 3.3,
+    drive: "rwd",
+    tireGrip: 0.94,
+    brakeTorqueNm: 5100,
+    fuelCapacityL: 68,
+    maxSpeedMps: 54,
+    color: "#dfc247"
+  },
+
+  truck: {
+    massKg: 4200,
+    wheelbaseM: 3.72,
+    trackWidthM: 1.84,
+    lengthM: 6.2,
+    widthM: 2.2,
+    heightM: 2.3,
+    wheelRadiusM: 0.44,
+    suspensionTravelM: 0.46,
+    springRateNpm: 78000,
+    damperNspm: 7600,
+    steeringMaxRad: 0.48,
+    maxSteeringSpeedMps: 13,
+    dragCoefficient: 0.48,
+    frontalAreaM2: 4.9,
+    maxRpm: 4800,
+    idleRpm: 650,
+    peakTorqueNm: 650,
+    maxPowerW: 240000,
+    gears: [4.7, 3.1, 2.1, 1.5, 1.0, 0.75],
+    finalDrive: 4.2,
+    drive: "rwd",
+    tireGrip: 0.91,
+    brakeTorqueNm: 9500,
+    fuelCapacityL: 110,
+    maxSpeedMps: 38,
+    color: "#77786c"
+  },
+
+  trailer: {
+    massKg: 1800,
+    wheelbaseM: 3.15,
+    trackWidthM: 1.72,
+    lengthM: 5.4,
+    widthM: 2.05,
+    heightM: 2.05,
+    wheelRadiusM: 0.36,
+    suspensionTravelM: 0.24,
+    springRateNpm: 56000,
+    damperNspm: 4200,
+    steeringMaxRad: 0.05,
+    maxSteeringSpeedMps: 1,
+    dragCoefficient: 0.62,
+    frontalAreaM2: 4.2,
+    maxRpm: 1,
+    idleRpm: 0,
+    peakTorqueNm: 0,
+    maxPowerW: 0,
+    gears: [1],
+    finalDrive: 1,
+    drive: "rwd",
+    tireGrip: 0.82,
+    brakeTorqueNm: 5200,
+    fuelCapacityL: 0,
+    maxSpeedMps: 48,
+    color: "#8a8c86"
+  }
+});
+
+const VEHICLE_SURFACES = Object.freeze({
+  asphalt: { grip: 1.00, rollingResistance: 0.014 },
+  "asphalt-highway": { grip: 1.02, rollingResistance: 0.012 },
+  sidewalk: { grip: 0.72, rollingResistance: 0.035 },
+  gravel: { grip: 0.70, rollingResistance: 0.045 },
+  mud: { grip: 0.45, rollingResistance: 0.095 },
+  sand: { grip: 0.58, rollingResistance: 0.075 },
+  terrain: { grip: 0.68, rollingResistance: 0.055 },
+  ice: { grip: 0.16, rollingResistance: 0.012 }
+});
+
+function vehicleClamp(value, min, max) {
+  return Math.max(min, Math.min(max, Number.isFinite(value) ? value : min));
+}
+
+function vehicleFinite(value, fallback = 0) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function vehicleLerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function vehicleSmoothstep(t) {
+  const v = vehicleClamp(t, 0, 1);
+  return v * v * (3 - 2 * v);
+}
+
+export async function createVehiclePhysicsSystem({
+  runtime,
+  scene,
+  engine,
+  camera,
+  services,
+  entities,
+  logger
+}) {
+  if (!runtime || !scene) {
+    throw new TypeError("Vehicle physics requires the shared scene and runtime.");
+  }
+
+  const B = globalThis.BABYLON;
+  if (!B) throw new Error("Babylon.js is unavailable.");
+
+  if (!services || typeof services.get !== "function") {
+    throw new TypeError("Vehicle physics requires the shared service registry.");
+  }
+
+  let graphics = null;
+  let world = null;
+  let weather = null;
+  let player = null;
+
+  function refreshDependencies() {
+    graphics = services.get("graphics") ?? null;
+    world = services.get("world") ??
+      services.get("worldArchitecture") ??
+      services.get("weltArchitektur") ?? null;
+    weather = services.get("weather") ?? null;
+    player = services.get("player") ?? null;
+  }
+
+  let elapsed = 0;
+  let initialized = false;
+  let running = false;
+  let disposed = false;
+
+  let nextVehicleId = 1;
+  let nextDamageId = 1;
+  let nextHotwireChallengeId = 1;
+
+  const vehicles = new Map();
+  const eventDisposers = [];
+  const serviceDisposers = [];
+  const activeTrailers = new Map();
+  const activeWinches = new Map();
+  const detachedParts = new Set();
+  let nextWinchId = 1;
+
+  const gravity = 9.81;
+  const airDensity = 1.225;
+
+  function makeMaterial(name, color, roughness = 0.65, metallic = 0.12) {
+    const material = graphics?.createPBRMaterial?.(name, {
+      albedo: color,
+      roughness,
+      metallic
+    });
+
+    if (material) return material;
+
+    const fallback = new B.StandardMaterial(name, scene);
+    fallback.diffuseColor = B.Color3.FromHexString(color);
+    fallback.specularColor = new B.Color3(0.17, 0.17, 0.17);
+    return fallback;
+  }
+
+  const materials = {
+    glass: makeMaterial("vehicle-glass", "#293f4a", 0.17, 0.32),
+    tire: makeMaterial("vehicle-tire", "#17191c", 0.95, 0),
+    alloy: makeMaterial("vehicle-alloy", "#8c969e", 0.29, 0.8),
+    interior: makeMaterial("vehicle-interior", "#24272b", 0.82, 0.04),
+    trim: makeMaterial("vehicle-trim", "#30353a", 0.52, 0.35),
+    lamp: makeMaterial("vehicle-lamp", "#e5dfbc", 0.28, 0.05),
+    redLamp: makeMaterial("vehicle-red-lamp", "#bc3434", 0.3, 0.04)
+  };
+
+  function engineTorqueFraction(rpm, profile) {
+    const normalized = vehicleClamp(
+      rpm / profile.maxRpm,
+      0,
+      1.15
+    );
+
+    // A tunable curve with low-speed torque, midrange peak and high-RPM
+    // taper; it is not a flat torque multiplier.
+    const lowEnd = vehicleSmoothstep(normalized / 0.28);
+    const midPeak = Math.exp(-Math.pow((normalized - 0.56) / 0.29, 2));
+    const highEndTaper = 1 - 0.36 * vehicleSmoothstep(
+      (normalized - 0.79) / 0.19
+    );
+
+    return vehicleClamp(
+      (0.42 + 0.32 * lowEnd + 0.26 * midPeak) *
+        highEndTaper,
+      0.18,
+      1.02
+    );
+  }
+
+  function createVehicleBodyVisuals(record) {
+    const { id, profile, root } = record;
+
+    const body = B.MeshBuilder.CreateBox(
+      `vehicle-${id}-body`,
+      {
+        width: profile.widthM,
+        height: profile.heightM * 0.46,
+        depth: profile.lengthM * 0.78
+      },
+      scene
+    );
+
+    body.parent = root;
+    body.position.y = profile.wheelRadiusM + profile.heightM * 0.27;
+    body.material = record.material;
+    body.isPickable = true;
+
+    body.metadata = {
+      ...(body.metadata || {}),
+      vehicleId: id,
+      isVehicle: true,
+      blocksPlayer: false
+    };
+
+    const cabin = B.MeshBuilder.CreateBox(
+      `vehicle-${id}-cabin`,
+      {
+        width: profile.widthM * 0.78,
+        height: profile.heightM * 0.38,
+        depth: profile.lengthM * 0.42
+      },
+      scene
+    );
+
+    cabin.parent = root;
+    cabin.position.set(
+      0,
+      profile.wheelRadiusM + profile.heightM * 0.62,
+      -profile.lengthM * 0.025
+    );
+
+    const isTrailer = record.classId === "trailer";
+    cabin.material = isTrailer ? record.material : materials.glass;
+    cabin.isPickable = true;
+
+    cabin.metadata = {
+      ...(cabin.metadata || {}),
+      vehicleId: id,
+      isVehicle: true,
+      materialClass: isTrailer ? "painted-metal" : "glass",
+      materialThicknessM: isTrailer ? 0.025 : 0.006,
+      penetrationResistanceJPerM: isTrailer ? 4200 : 1200,
+      blocksPlayer: false
+    };
+
+    if (isTrailer) {
+      const tongue = B.MeshBuilder.CreateBox(
+        `vehicle-${id}-trailer-tongue`,
+        { width: 0.16, height: 0.14, depth: profile.lengthM * 0.18 },
+        scene
+      );
+      tongue.parent = root;
+      tongue.position.set(0, profile.wheelRadiusM + 0.04, profile.lengthM * 0.43);
+      tongue.material = materials.trim;
+      tongue.isPickable = false;
+      record.visualParts.add(tongue);
+    }
+
+    const lower = B.MeshBuilder.CreateBox(
+      `vehicle-${id}-lower-trim`,
+      {
+        width: profile.widthM * 0.95,
+        height: profile.heightM * 0.08,
+        depth: profile.lengthM * 0.81
+      },
+      scene
+    );
+
+    lower.parent = root;
+    lower.position.y = profile.wheelRadiusM + profile.heightM * 0.045;
+    lower.material = materials.trim;
+    lower.isPickable = true;
+
+    lower.metadata = {
+      ...(lower.metadata || {}),
+      vehicleId: id,
+      isVehicle: true,
+      blocksPlayer: false
+    };
+
+    const wheels = [];
+
+    for (const axle of [-1, 1]) {
+      for (const side of [-1, 1]) {
+        const front = axle === 1;
+
+        const pivot = new B.TransformNode(
+          `vehicle-${id}-wheel-pivot-${axle}-${side}`,
+          scene
+        );
+
+        pivot.parent = root;
+
+        pivot.position.set(
+          side * profile.trackWidthM * 0.5,
+          profile.wheelRadiusM,
+          axle * profile.wheelbaseM * 0.5
+        );
+
+        const tire = B.MeshBuilder.CreateCylinder(
+          `vehicle-${id}-tire-${axle}-${side}`,
+          {
+            height: 0.22,
+            diameter: profile.wheelRadiusM * 2,
+            tessellation: 20
+          },
+          scene
+        );
+
+        tire.parent = pivot;
+        tire.rotation.z = Math.PI / 2;
+        tire.material = materials.tire;
+        tire.isPickable = false;
+
+        const alloy = B.MeshBuilder.CreateCylinder(
+          `vehicle-${id}-alloy-${axle}-${side}`,
+          {
+            height: 0.225,
+            diameter: profile.wheelRadiusM * 1.14,
+            tessellation: 12
+          },
+          scene
+        );
+
+        alloy.parent = pivot;
+        alloy.rotation.z = Math.PI / 2;
+        alloy.material = materials.alloy;
+        alloy.isPickable = false;
+
+        wheels.push({
+          axle,
+          side,
+          front,
+          pivot,
+          tire,
+          alloy,
+          spinAngle: 0,
+          suspensionLengthM: profile.suspensionTravelM,
+          compressionM: 0,
+          grounded: false,
+          normalForceN: 0,
+          slipRatio: 0,
+          slipAngleRad: 0,
+          surface: "asphalt"
+        });
+      }
+    }
+
+    const headlights = [];
+
+    for (const side of [-1, 1]) {
+      const lamp = B.MeshBuilder.CreateBox(
+        `vehicle-${id}-headlamp-${side}`,
+        {
+          width: 0.19,
+          height: 0.12,
+          depth: 0.05
+        },
+        scene
+      );
+
+      lamp.parent = root;
+      lamp.position.set(
+        side * profile.widthM * 0.31,
+        profile.wheelRadiusM + profile.heightM * 0.33,
+        profile.lengthM * 0.41
+      );
+
+      lamp.material = materials.lamp;
+      lamp.isPickable = false;
+      headlights.push(lamp);
+
+      const tail = B.MeshBuilder.CreateBox(
+        `vehicle-${id}-tail-lamp-${side}`,
+        {
+          width: 0.2,
+          height: 0.14,
+          depth: 0.05
+        },
+        scene
+      );
+
+      tail.parent = root;
+      tail.position.set(
+        side * profile.widthM * 0.33,
+        profile.wheelRadiusM + profile.heightM * 0.30,
+        -profile.lengthM * 0.41
+      );
+
+      tail.material = materials.redLamp;
+      tail.isPickable = false;
+
+      record.visualParts.add(tail);
+    }
+
+    record.visualParts.add(body, cabin, lower);
+
+    for (const wheel of wheels) {
+      record.visualParts.add(
+        wheel.pivot,
+        wheel.tire,
+        wheel.alloy
+      );
+    }
+
+    for (const lamp of headlights) record.visualParts.add(lamp);
+
+    return { body, cabin, lower, wheels, headlights };
+  }
+
+  function createVehicle(options = {}) {
+    const classId = options.classId ?? "sedan";
+    const sourceProfile = VEHICLE_CLASSES[classId];
+
+    if (!sourceProfile) {
+      return { ok: false, reason: "unknown-vehicle-class" };
+    }
+
+    const id = options.id ?? `vehicle-${nextVehicleId++}`;
+
+    if (vehicles.has(id)) {
+      return { ok: false, reason: "duplicate-vehicle-id" };
+    }
+
+    const profile = {
+      ...sourceProfile,
+      ...(options.profile ?? {})
+    };
+
+    const validProfile =
+      Number.isFinite(profile.massKg) && profile.massKg > 0 &&
+      Number.isFinite(profile.wheelbaseM) && profile.wheelbaseM > 0 &&
+      Number.isFinite(profile.trackWidthM) && profile.trackWidthM > 0 &&
+      Number.isFinite(profile.lengthM) && profile.lengthM > 0 &&
+      Number.isFinite(profile.widthM) && profile.widthM > 0 &&
+      Number.isFinite(profile.heightM) && profile.heightM > 0 &&
+      Number.isFinite(profile.wheelRadiusM) && profile.wheelRadiusM > 0 &&
+      Number.isFinite(profile.suspensionTravelM) && profile.suspensionTravelM > 0 &&
+      Number.isFinite(profile.springRateNpm) && profile.springRateNpm > 0 &&
+      Number.isFinite(profile.damperNspm) && profile.damperNspm >= 0 &&
+      Number.isFinite(profile.maxSpeedMps) && profile.maxSpeedMps > 0 &&
+      Array.isArray(profile.gears) && profile.gears.length > 0 &&
+      profile.gears.every(ratio => Number.isFinite(ratio) && ratio > 0);
+
+    if (!validProfile) {
+      return { ok: false, reason: "invalid-vehicle-profile" };
+    }
+
+    if (typeof id !== "string" || !id.trim()) {
+      return { ok: false, reason: "invalid-vehicle-id" };
+    }
+
+    const root = new B.TransformNode(`vehicle-root-${id}`, scene);
+
+    root.position.copyFrom(
+      options.position
+        ? new B.Vector3(
+            options.position.x,
+            options.position.y ?? 0,
+            options.position.z
+          )
+        : B.Vector3.Zero()
+    );
+
+    root.rotation.y = vehicleFinite(options.heading, 0);
+
+    const color = options.color ?? profile.color;
+
+    const material = makeMaterial(
+      `vehicle-body-material-${id}`,
+      color,
+      0.32,
+      0.36
+    );
+
+    const record = {
+      id,
+      classId,
+      profile,
+      root,
+      material,
+      visualParts: new Set(),
+
+      position: root.position,
+      velocity: new B.Vector3(0, 0, 0),
+      yaw: root.rotation.y,
+      yawRateRadS: 0,
+      pitchRad: 0,
+      rollRad: 0,
+
+      engineRPM: profile.idleRpm,
+      gearIndex: 0,
+      driveDirection: 1,
+      throttle: 0,
+      brake: 0,
+      steering: 0,
+      handbrake: false,
+
+      health: 100,
+      damage: {
+        engine: 0,
+        cooling: 0,
+        transmission: 0,
+        suspension: [0, 0, 0, 0],
+        tireWear: [0, 0, 0, 0],
+        bodyIntegrity: 1
+      },
+
+      fuelLiters: profile.fuelCapacityL * 0.72,
+      fuelLeakLitersPerSecond: 0,
+      fuelLeakActive: false,
+      engineRunning: true,
+
+      ownerId: options.ownerId ?? null,
+      owned: options.owned === true,
+      stolen: false,
+      alarmArmed: options.alarmArmed === true,
+      alarmTriggered: false,
+      lockState: options.lockState ?? "unlocked",
+
+      driverId: null,
+      passengerIds: [],
+      depot: [],
+      cargoItems: [],
+      cargoMassKg: 0,
+      cargoCapacityKg: classId === "trailer" ? 4200 :
+        classId === "truck" ? 1600 : 0,
+      towingMassKg: 0,
+      tuning: {
+        engineFactor: 1,
+        brakeFactor: 1,
+        suspensionFactor: 1,
+        tireGripFactor: 1,
+        paintColor: color,
+        spoiler: false,
+        wheelStyle: "standard",
+        winchInstalled: options.winchInstalled ?? classId === "truck"
+      },
+
+      autopilot: null,
+      trailerId: null,
+      towedBy: null,
+      detachedPartNames: new Set(),
+      lockBypassRequired: options.lockState === "locked",
+      windowBroken: false,
+      hotwireChallenge: null,
+
+      wheelStates: [],
+      groundContacts: 0,
+      averageSuspensionCompression: 0,
+
+      lastImpactTime: -Infinity,
+      lastSafePosition: root.position.clone(),
+      delivered: false,
+      destroyed: false,
+
+      metadata: {
+        taxiService: classId === "taxi",
+        source: options.source ?? "world",
+        lastFuelEmptyEventAt: -Infinity
+      }
+    };
+
+    const visuals = createVehicleBodyVisuals(record);
+    record.bodyMesh = visuals.body;
+    record.bodyBasePositions = record.bodyMesh.getVerticesData?.(
+      B.VertexBuffer.PositionKind
+    )?.slice?.() ?? null;
+    record.cabinMesh = visuals.cabin;
+    record.wheels = visuals.wheels;
+    record.headlights = visuals.headlights;
+
+    record.wheelStates = record.wheels.map(() => ({
+      compressionM: 0,
+      grounded: false,
+      normalForceN: 0,
+      slipRatio: 0,
+      slipAngleRad: 0,
+      surface: "asphalt"
+    }));
+
+    record.wheels.forEach((wheel, index) => {
+      wheel.state = record.wheelStates[index];
+    });
+
+    vehicles.set(id, record);
+
+    try {
+      entities.register(id, {
+        id,
+        type: "vehicle",
+        classId,
+        position: root.position,
+        root,
+        record
+      });
+    } catch (error) {
+      vehicles.delete(id);
+      root.dispose(false, true);
+      material.dispose();
+
+      return {
+        ok: false,
+        reason: "entity-registry-rejected",
+        message: error.message
+      };
+    }
+
+    runtime.events.emit("vehicle:created", {
+      vehicleId: id,
+      classId,
+      position: record.position.clone()
+    });
+
+    return { ok: true, vehicleId: id, vehicle: record };
+  }
+
+  function getVehicle(id) {
+    return vehicles.get(id) ?? null;
+  }
+
+  function getOwnedVehicles(characterId = null) {
+    return [...vehicles.values()]
+      .filter(vehicle =>
+        vehicle.owned &&
+        (!characterId || vehicle.ownerId === characterId)
+      )
+      .map(vehicle => ({
+        id: vehicle.id,
+        name: vehicle.classId,
+        description: `${vehicle.classId} · ${Math.round(
+          vehicle.fuelLiters
+        )} L fuel`,
+        fuelLiters: vehicle.fuelLiters,
+        health: vehicle.health,
+        status: vehicle.destroyed
+          ? "destroyed"
+          : vehicle.driverId ? "in use" : "available"
+      }));
+  }
+
+  function getVehicleForward(vehicle) {
+    return new B.Vector3(
+      Math.sin(vehicle.yaw),
+      0,
+      Math.cos(vehicle.yaw)
+    );
+  }
+
+  function getVehicleRight(vehicle) {
+    return new B.Vector3(
+      Math.cos(vehicle.yaw),
+      0,
+      -Math.sin(vehicle.yaw)
+    );
+  }
+
+  function transformLocal(vehicle, localPosition) {
+    vehicle.root.computeWorldMatrix(true);
+
+    return B.Vector3.TransformCoordinates(
+      localPosition,
+      vehicle.root.getWorldMatrix()
+    );
+  }
+
+  function raycastGround(origin, maximumDistance) {
+    const ray = new B.Ray(
+      origin,
+      new B.Vector3(0, -1, 0),
+      maximumDistance
+    );
+
+    return scene.pickWithRay(
+      ray,
+      mesh =>
+        mesh.isEnabled() &&
+        mesh.isVisible &&
+        (mesh.metadata?.isWalkable === true ||
+          mesh.metadata?.isGroundSurface === true ||
+          mesh.metadata?.kind === "road" ||
+          mesh.metadata?.roadId != null) &&
+        mesh.metadata?.isWaterSurface !== true,
+      false
+    );
+  }
+
+  function findRoadsidePoint(position, maxDistanceM = 120) {
+    const direct = world?.closestPointOnRoad?.(position, maxDistanceM);
+    if (direct && Number.isFinite(direct.x) && Number.isFinite(direct.z) && !direct.blocked) {
+      return {
+        ...direct,
+        y: vehicleFinite(direct.y, 0),
+        distance: vehicleFinite(direct.distance, 0),
+        blocked: false
+      };
+    }
+
+    // Module 5's current public API exposes findNearestDriveablePoint(), not
+    // closestPointOnRoad(). Use the real road graph adapter when available.
+    const driveable = world?.findNearestDriveablePoint?.(position, maxDistanceM);
+    if (driveable && Number.isFinite(driveable.x) && Number.isFinite(driveable.z) && driveable.nodeId) {
+      return {
+        ...driveable,
+        y: vehicleFinite(driveable.y, 0),
+        distance: vehicleFinite(driveable.distance, 0),
+        blocked: false,
+        type: driveable.type ?? "street"
+      };
+    }
+    return null;
+  }
+
+  function sampleSurface(position) {
+    const road = findRoadsidePoint(position, 80);
+    const weatherEffects = weather?.getSurfaceEffectsAt?.(position);
+
+    let surface = road && road.distance < 12
+      ? road.type === "highway"
+        ? "asphalt-highway"
+        : "asphalt"
+      : "terrain";
+
+    const region = world?.regionAt?.(position.x, position.z) ??
+      world?.findRegionAtPosition?.(position) ?? null;
+    const regionType = String(region?.type ?? region?.id ?? region ?? "").toLowerCase();
+    if (regionType === "wetlands" || regionType === "swamp" ||
+        regionType.includes("swamp") || regionType.includes("wetland")) {
+      surface = "mud";
+    }
+
+    if (regionType === "coastal" || regionType === "coast" ||
+        regionType.includes("coast")) {
+      surface = "sand";
+    }
+
+    const profile = VEHICLE_SURFACES[surface] ??
+      VEHICLE_SURFACES.terrain;
+
+    const wetness = vehicleClamp(
+      vehicleFinite(weatherEffects?.wetness),
+      0,
+      1
+    );
+    const precipitation = vehicleClamp(
+      vehicleFinite(weatherEffects?.precipitation),
+      0,
+      1
+    );
+    // The weather API exposes normalized wetness and precipitation, not a
+    // measured puddle-depth field. This bounded film estimate is explicit
+    // and remains an approximation rather than claiming a terrain water solver.
+    const waterFilmM = vehicleClamp(
+      wetness * 0.0022 + precipitation * 0.0028,
+      0,
+      0.005
+    );
+    const weatherGrip = vehicleClamp(
+      vehicleFinite(weatherEffects?.tractionMultiplier, 1 - wetness * 0.34),
+      0.35,
+      1.1
+    );
+
+    return {
+      surface,
+      dryGrip: profile.grip,
+      grip: profile.grip * weatherGrip,
+      rollingResistance: profile.rollingResistance *
+        (1 + wetness * 0.14),
+      wetness,
+      precipitation,
+      waterFilmM,
+      weatherEffects,
+      road
+    };
+  }
+
+  function updateSuspension(vehicle, dt) {
+    let contacts = 0;
+    let totalCompression = 0;
+
+    for (let i = 0; i < vehicle.wheels.length; i++) {
+      const wheel = vehicle.wheels[i];
+      const profile = vehicle.profile;
+
+      const mountLocal = new B.Vector3(
+        wheel.side * profile.trackWidthM * 0.5,
+        profile.wheelRadiusM + profile.suspensionTravelM,
+        wheel.axle * profile.wheelbaseM * 0.5
+      );
+
+      const origin = transformLocal(vehicle, mountLocal);
+
+      const rayLength =
+        profile.suspensionTravelM +
+        profile.wheelRadiusM +
+        0.35;
+
+      const hit = raycastGround(origin, rayLength);
+      const wheelState = vehicle.wheelStates[i];
+
+      if (hit?.hit && hit.pickedPoint) {
+        const contactDistance = hit.distance;
+        const suspensionLength = Math.max(
+          0,
+          contactDistance - profile.wheelRadiusM
+        );
+
+        const compression = vehicleClamp(
+          profile.suspensionTravelM - suspensionLength,
+          0,
+          profile.suspensionTravelM
+        );
+
+        const compressionVelocity =
+          (compression - wheelState.compressionM) /
+          Math.max(0.001, dt);
+
+        const springRate =
+          profile.springRateNpm *
+          vehicle.tuning.suspensionFactor;
+
+        const springForce = springRate * compression;
+        const damperForce =
+          profile.damperNspm * compressionVelocity;
+
+        const effectiveMassKg = vehicle.profile.massKg +
+          (vehicle.cargoMassKg ?? 0) + (vehicle.towingMassKg ?? 0);
+        const normalForce = vehicleClamp(
+          springForce + damperForce,
+          0,
+          effectiveMassKg * gravity * 2.4
+        );
+
+        wheelState.compressionM = compression;
+        wheelState.grounded = true;
+        wheelState.normalForceN = normalForce;
+        wheelState.surface = sampleSurface(hit.pickedPoint).surface;
+
+        contacts++;
+        totalCompression += compression;
+      } else {
+        wheelState.compressionM = vehicleLerp(
+          wheelState.compressionM,
+          0,
+          vehicleClamp(dt * 4, 0, 1)
+        );
+
+        wheelState.grounded = false;
+        wheelState.normalForceN = 0;
+        wheelState.surface = "air";
+      }
+
+      wheel.state = wheelState;
+
+      wheel.pivot.position.y =
+        profile.wheelRadiusM + wheelState.compressionM;
+
+      if (wheel.front) {
+        wheel.pivot.rotation.y =
+          vehicle.steering *
+          vehicleClamp(1 - Math.abs(vehicle.velocity.length()) /
+            70, 0.18, 1);
+      }
+
+      wheel.spinAngle += (
+        B.Vector3.Dot(vehicle.velocity, getVehicleForward(vehicle)) /
+        Math.max(0.01, profile.wheelRadiusM)
+      ) * dt;
+
+      wheel.tire.rotation.x = wheel.spinAngle;
+      wheel.alloy.rotation.x = wheel.spinAngle;
+    }
+
+    vehicle.groundContacts = contacts;
+
+    vehicle.averageSuspensionCompression =
+      contacts > 0 ? totalCompression / contacts : 0;
+
+    const compressionBySide = (side) => {
+      const selected = vehicle.wheelStates.filter(
+        (_, i) => vehicle.wheels[i].side === side
+      );
+
+      return selected.reduce(
+        (sum, wheel) => sum + wheel.compressionM,
+        0
+      ) / Math.max(1, selected.length);
+    };
+
+    const leftCompression = compressionBySide(-1);
+    const rightCompression = compressionBySide(1);
+
+    const rollTarget = vehicleClamp(
+      (rightCompression - leftCompression) * 0.55,
+      -0.22,
+      0.22
+    );
+
+    vehicle.rollRad = vehicleLerp(
+      vehicle.rollRad,
+      rollTarget,
+      vehicleClamp(dt * 5, 0, 1)
+    );
+  }
+
+  function updateAutomaticGear(vehicle, forwardSpeed, dt) {
+    const profile = vehicle.profile;
+    const gearCount = profile.gears.length;
+
+    if (vehicle.driveDirection < 0) {
+      vehicle.gearIndex = 0;
+      return;
+    }
+
+    const gearRatio = profile.gears[vehicle.gearIndex];
+    const wheelRpm =
+      Math.abs(forwardSpeed) /
+      (2 * Math.PI * profile.wheelRadiusM) * 60;
+
+    const targetRpm = Math.max(
+      profile.idleRpm,
+      wheelRpm * gearRatio * profile.finalDrive
+    );
+
+    vehicle.engineRPM = vehicleLerp(
+      vehicle.engineRPM,
+      Math.min(profile.maxRpm, targetRpm),
+      vehicleClamp(1 - Math.exp(-4.5 * dt), 0, 1)
+    );
+
+    if (
+      vehicle.engineRPM > profile.maxRpm * 0.90 &&
+      vehicle.gearIndex < gearCount - 1
+    ) {
+      vehicle.gearIndex++;
+    } else if (
+      vehicle.engineRPM < profile.maxRpm * 0.34 &&
+      vehicle.gearIndex > 0
+    ) {
+      vehicle.gearIndex--;
+    }
+  }
+
+  function updateVehicleHandling(vehicle, input, dt) {
+    const profile = vehicle.profile;
+    const effectiveMassKg = profile.massKg +
+      (vehicle.cargoMassKg ?? 0) + (vehicle.towingMassKg ?? 0);
+    const forward = getVehicleForward(vehicle);
+    const right = getVehicleRight(vehicle);
+    const velocity = vehicle.velocity;
+    const forwardSpeed = B.Vector3.Dot(velocity, forward);
+    const lateralSpeed = B.Vector3.Dot(velocity, right);
+    const totalSpeed = velocity.length();
+    const currentSurface = sampleSurface(vehicle.position);
+    const waterFilmM = currentSurface.waterFilmM;
+    const criticalHydroplaneSpeedMps = 16 + waterFilmM * 3000;
+    const hydroplaning = waterFilmM >= 0.0012 &&
+      totalSpeed > criticalHydroplaneSpeedMps;
+    const hydroplaningFactor = hydroplaning
+      ? vehicleClamp(
+          1 - (totalSpeed - criticalHydroplaneSpeedMps) / 32,
+          0.25,
+          0.92
+        )
+      : 1;
+
+    vehicle.throttle = vehicleClamp(vehicleFinite(input?.throttle), 0, 1);
+    vehicle.brake = vehicleClamp(vehicleFinite(input?.brake), 0, 1);
+    vehicle.steering = vehicleClamp(vehicleFinite(input?.steering), -1, 1);
+    vehicle.handbrake = input?.handbrake === true;
+
+    const requestedDirection = input?.gearDirection === -1 ? -1 : 1;
+    if (Math.abs(forwardSpeed) < 1.15) vehicle.driveDirection = requestedDirection;
+    if (!vehicle.engineRunning || vehicle.fuelLiters <= 0 || vehicle.damage.engine > 0.88) {
+      vehicle.throttle = 0;
+    }
+
+    const speedRatio = vehicleClamp(totalSpeed / profile.maxSpeedMps, 0, 1.4);
+    const steeringAngle = vehicle.steering * profile.steeringMaxRad *
+      (1 - speedRatio * 0.24);
+
+    const averageWear = vehicle.damage.tireWear.reduce(
+      (sum, wear) => sum + vehicleClamp(wear, 0, 1), 0
+    ) / Math.max(1, vehicle.damage.tireWear.length);
+    const wearGripFactor = vehicleClamp(1 - averageWear * 0.36, 0.55, 1);
+    const tireGrip = currentSurface.grip * profile.tireGrip *
+      vehicle.tuning.tireGripFactor * hydroplaningFactor * wearGripFactor;
+
+    const normalLoadN = vehicle.wheelStates.reduce(
+      (sum, wheel) => sum + Math.max(0, wheel.normalForceN), 0
+    );
+    const groundedLoadN = vehicle.groundContacts > 0 ? normalLoadN : 0;
+    const tireForceCapacityN = groundedLoadN * tireGrip;
+    const drivenFraction = profile.drive === "fwd" ? 0.48 :
+      profile.drive === "awd" ? 0.85 : 0.55;
+
+    const rpmFraction = engineTorqueFraction(vehicle.engineRPM, profile);
+    const engineTorque = profile.peakTorqueNm * rpmFraction * vehicle.tuning.engineFactor;
+    const currentGear = profile.gears[vehicle.gearIndex] ?? 1;
+    const wheelTorque = engineTorque * currentGear * profile.finalDrive *
+      (profile.drive === "awd" ? 0.90 : 0.88);
+    const engineForceN = wheelTorque / Math.max(0.01, profile.wheelRadiusM);
+    const maxTractionForce = tireForceCapacityN * drivenFraction;
+    const unsignedDriveForce = vehicle.engineRunning && vehicle.groundContacts > 0
+      ? vehicleClamp(engineForceN * vehicle.throttle, 0, maxTractionForce)
+      : 0;
+    const driveForce = vehicle.driveDirection * unsignedDriveForce;
+
+    const brakeForceRequest = profile.brakeTorqueNm *
+      vehicle.tuning.brakeFactor / Math.max(0.01, profile.wheelRadiusM) * vehicle.brake;
+    const brakingForce = Math.abs(forwardSpeed) > 0.25
+      ? -Math.sign(forwardSpeed) * Math.min(brakeForceRequest, tireForceCapacityN)
+      : 0;
+    const handbrakeForce = vehicle.handbrake
+      ? -Math.sign(forwardSpeed || vehicle.driveDirection) *
+        Math.min(effectiveMassKg * 9.81 * tireGrip * 0.72, tireForceCapacityN * 0.72)
+      : 0;
+
+    const slipAngleBase = Math.atan2(lateralSpeed, Math.max(0.75, Math.abs(forwardSpeed)));
+    for (let index = 0; index < vehicle.wheelStates.length; index++) {
+      const state = vehicle.wheelStates[index];
+      const wheel = vehicle.wheels[index];
+      state.slipAngleRad = slipAngleBase - (wheel.front ? steeringAngle : 0);
+      state.slipRatio = vehicleClamp(
+        vehicle.throttle * 0.025 + vehicle.brake * 0.018 +
+        Math.abs(state.slipAngleRad) * 0.12,
+        0,
+        1
+      );
+      if (state.grounded) {
+        vehicle.damage.tireWear[index] = vehicleClamp(
+          vehicle.damage.tireWear[index] +
+            state.slipRatio * Math.max(0.1, totalSpeed) * dt * 0.000035,
+          0,
+          1
+        );
+      }
+    }
+
+    let lateralForce = -lateralSpeed * effectiveMassKg *
+      vehicleClamp(tireGrip * 3.1, 0.25, 5.2);
+    if (vehicle.handbrake) lateralForce *= 0.28;
+    lateralForce = vehicleClamp(lateralForce, -tireForceCapacityN, tireForceCapacityN);
+
+    const remainingLongitudinalCapacity = Math.sqrt(Math.max(
+      0,
+      tireForceCapacityN * tireForceCapacityN - lateralForce * lateralForce
+    ));
+    let longitudinalForce = vehicleClamp(
+      driveForce + brakingForce + handbrakeForce,
+      -remainingLongitudinalCapacity,
+      remainingLongitudinalCapacity
+    );
+
+    const rollingForce = Math.sign(forwardSpeed) * effectiveMassKg * 9.81 *
+      currentSurface.rollingResistance;
+    const aerodynamicForce = 0.5 * airDensity * profile.dragCoefficient *
+      profile.frontalAreaM2 * totalSpeed * totalSpeed;
+    let longitudinalAcceleration = (
+      longitudinalForce - rollingForce - Math.sign(forwardSpeed) * aerodynamicForce
+    ) / effectiveMassKg;
+
+    if (vehicle.groundContacts === 0) longitudinalAcceleration *= 0.35;
+    if ((forwardSpeed > profile.maxSpeedMps && longitudinalAcceleration > 0) ||
+        (forwardSpeed < -Math.min(12, profile.maxSpeedMps) && longitudinalAcceleration < 0)) {
+      longitudinalAcceleration = 0;
+    }
+    if (Math.abs(forwardSpeed) < 0.5 && vehicle.brake > 0.7 && Math.abs(lateralSpeed) < 0.3) {
+      longitudinalAcceleration = 0;
+    }
+
+    const yawRate = (forwardSpeed / Math.max(0.2, profile.wheelbaseM)) *
+      Math.tan(steeringAngle) *
+      vehicleClamp(totalSpeed / profile.maxSteeringSpeedMps, 0.08, 1) *
+      (1 - vehicle.damage.suspension[0] * 0.25);
+    vehicle.yawRateRadS = vehicleLerp(
+      vehicle.yawRateRadS, yawRate, vehicleClamp(1 - Math.exp(-5.5 * dt), 0, 1)
+    );
+    vehicle.yaw += vehicle.yawRateRadS * dt;
+
+    velocity.addInPlace(forward.scale(longitudinalAcceleration * dt));
+    velocity.addInPlace(right.scale(lateralForce / effectiveMassKg * dt));
+    if (vehicle.brake > 0.9 && Math.abs(forwardSpeed) < 0.15 && Math.abs(lateralSpeed) < 0.15) {
+      velocity.x = 0;
+      velocity.z = 0;
+    }
+
+    const travelDistance = velocity.length() * dt;
+    const collision = resolveVehicleCollision(vehicle, travelDistance);
+    if (!collision) {
+      vehicle.position.x += velocity.x * dt;
+      vehicle.position.z += velocity.z * dt;
+    }
+
+    const groundY = getGroundReferenceY(vehicle);
+    const staticSagM = vehicleClamp(
+      profile.massKg * 9.81 / (4 * profile.springRateNpm),
+      0.035,
+      profile.suspensionTravelM * 0.55
+    );
+    vehicle.position.y = groundY - staticSagM;
+    vehicle.pitchRad = vehicleLerp(
+      vehicle.pitchRad,
+      vehicle.throttle > vehicle.brake ? -vehicle.throttle * 0.045 :
+        vehicle.brake > 0 ? vehicle.brake * 0.065 : 0,
+      vehicleClamp(1 - Math.exp(-3.4 * dt), 0, 1)
+    );
+
+    vehicle.root.position.copyFrom(vehicle.position);
+    vehicle.root.rotation.set(vehicle.pitchRad, vehicle.yaw, vehicle.rollRad);
+    updateSuspension(vehicle, dt);
+    vehicle.root.position.copyFrom(vehicle.position);
+    vehicle.root.rotation.set(vehicle.pitchRad, vehicle.yaw, vehicle.rollRad);
+
+    updateFuel(vehicle, totalSpeed, dt);
+    if (vehicle.damage.engine > 0.88) {
+      vehicle.engineRunning = false;
+      vehicle.throttle = 0;
+    }
+
+    runtime.events.emit("vehicle:telemetry", {
+      vehicleId: vehicle.id,
+      speedMps: vehicle.velocity.length(),
+      forwardSpeedMps: forwardSpeed,
+      lateralSpeedMps: lateralSpeed,
+      engineRPM: vehicle.engineRPM,
+      gear: vehicle.gearIndex + 1,
+      gearDirection: vehicle.driveDirection,
+      steering: vehicle.steering,
+      throttle: vehicle.throttle,
+      brake: vehicle.brake,
+      fuelLiters: vehicle.fuelLiters,
+      tireWear: [...vehicle.damage.tireWear],
+      surface: currentSurface.surface,
+      wetness: currentSurface.wetness,
+      waterFilmM,
+      criticalHydroplaneSpeedMps,
+      hydroplaning,
+      tireGrip
+    });
+
+    return {
+      longitudinalAcceleration,
+      forwardSpeed,
+      lateralSpeed,
+      totalSpeed,
+      surface: currentSurface.surface,
+      wetness: currentSurface.wetness,
+      waterFilmM,
+      criticalHydroplaneSpeedMps,
+      hydroplaning,
+      tireGrip
+    };
+  }
+
+  function getGroundReferenceY(vehicle) {
+    const ground = world?.sampleGroundHeight?.(
+      vehicle.position.x,
+      vehicle.position.z
+    );
+
+    if (Number.isFinite(ground)) return ground;
+
+    const hit = raycastGround(
+      vehicle.position.add(new B.Vector3(0, 3, 0)),
+      30
+    );
+
+    if (hit?.hit && hit.pickedPoint) return hit.pickedPoint.y;
+
+    const staticSagM = vehicleClamp(
+      vehicle.profile.massKg * gravity /
+        (4 * vehicle.profile.springRateNpm),
+      0.035,
+      vehicle.profile.suspensionTravelM * 0.55
+    );
+    return vehicle.position.y + staticSagM;
+  }
+
+  function resolveVehicleCollision(vehicle, travelDistance) {
+    const velocity = vehicle.velocity;
+    const speed = velocity.length();
+
+    if (speed < 0.15) return false;
+
+    const direction = velocity.normalize();
+    const start = vehicle.position.add(new B.Vector3(0, 0.75, 0));
+
+    const ray = new B.Ray(
+      start,
+      direction,
+      Math.max(
+        vehicle.profile.lengthM * 0.42,
+        travelDistance + 0.5
+      )
+    );
+
+    const hit = scene.pickWithRay(
+      ray,
+      mesh => {
+        if (!mesh || mesh.isDisposed()) return false;
+        if (!mesh.isEnabled() || !mesh.isVisible) return false;
+        if (mesh.metadata?.vehicleId === vehicle.id) return false;
+        const otherVehicle = vehicles.get(mesh.metadata?.vehicleId);
+        if (otherVehicle && (
+          vehicle.trailerId === otherVehicle.id ||
+          vehicle.towedBy === otherVehicle.id ||
+          otherVehicle.trailerId === vehicle.id ||
+          otherVehicle.towedBy === vehicle.id
+        )) return false;
+
+        return mesh.metadata?.blocksPlayer === true ||
+          mesh.metadata?.isVehicle === true;
+      },
+      false
+    );
+
+    if (!hit?.hit || hit.distance > travelDistance + 0.4) {
+      return false;
+    }
+
+    const relativeSpeed = speed;
+    const impactEnergyJ =
+      0.5 * (vehicle.profile.massKg + (vehicle.cargoMassKg ?? 0) +
+        (vehicle.towingMassKg ?? 0)) * relativeSpeed * relativeSpeed;
+
+    const damage = vehicleClamp(
+      impactEnergyJ / 125000,
+      0,
+      55
+    );
+
+    vehicle.health = Math.max(0, vehicle.health - damage);
+    vehicle.damage.bodyIntegrity = vehicleClamp(
+      vehicle.damage.bodyIntegrity - damage / 100,
+      0,
+      1
+    );
+
+    vehicle.lastImpactTime = elapsed;
+    deformVehicleBody(
+      vehicle,
+      hit.pickedPoint ?? vehicle.position,
+      impactEnergyJ
+    );
+    if (impactEnergyJ >= 210000) {
+      detachVehiclePart(vehicle, "front-bumper", impactEnergyJ);
+    }
+
+    // Restitution produces a bounded impulse; the vehicle is not
+    // teleported through the obstacle or given an unbounded velocity.
+    const restitution = vehicleClamp(
+      vehicle.damage.bodyIntegrity * 0.23,
+      0,
+      0.23
+    );
+
+    velocity.scaleInPlace(-restitution);
+
+    if (vehicle.health <= 0) {
+      vehicle.destroyed = true;
+      vehicle.engineRunning = false;
+    }
+
+    runtime.events.emit("vehicle:damaged", {
+      vehicleId: vehicle.id,
+      damage,
+      impactEnergyJ,
+      targetEntityId: hit.pickedMesh?.metadata?.vehicleId ?? null,
+      position: hit.pickedPoint?.clone?.() ?? vehicle.position.clone(),
+      normal: hit.getNormal?.(true, true) ?? null,
+      destroyed: vehicle.destroyed
+    });
+
+    runtime.events.emit("vehicle:collision", {
+      vehicleId: vehicle.id,
+      speedMps: relativeSpeed,
+      impactEnergyJ
+    });
+
+    return true;
+  }
+
+  function deformVehicleBody(vehicle, impactWorldPosition, impactEnergyJ) {
+    const mesh = vehicle.bodyMesh;
+    if (!mesh?.getVerticesData || !mesh?.getIndices || !B.VertexData?.ComputeNormals) {
+      return false;
+    }
+
+    const positions = mesh.getVerticesData(B.VertexBuffer.PositionKind);
+    const indices = mesh.getIndices();
+    if (!positions || !indices || positions.length < 9) return false;
+
+    mesh.computeWorldMatrix(true);
+    const inverseWorld = mesh.getWorldMatrix().clone();
+    inverseWorld.invert();
+    const impactLocal = B.Vector3.TransformCoordinates(
+      impactWorldPosition,
+      inverseWorld
+    );
+    const radius = vehicleClamp(0.75 + Math.sqrt(impactEnergyJ) / 1500, 0.8, 2.1);
+    const maxDentM = vehicleClamp(impactEnergyJ / 1800000, 0.015, 0.22);
+    const inward = new B.Vector3(
+      -Math.sign(impactLocal.x || 1) * (Math.abs(impactLocal.x) > 0.3 ? 1 : 0),
+      -Math.sign(impactLocal.y || 1) * (Math.abs(impactLocal.y) > 0.25 ? 0.35 : 0),
+      -Math.sign(impactLocal.z || 1) * (Math.abs(impactLocal.z) > 0.5 ? 1 : 0)
+    );
+    if (inward.lengthSquared() < 1e-6) inward.set(0, 0, -1);
+    inward.normalize();
+
+    for (let i = 0; i < positions.length; i += 3) {
+      const vertex = new B.Vector3(positions[i], positions[i + 1], positions[i + 2]);
+      const distance = B.Vector3.Distance(vertex, impactLocal);
+      if (distance >= radius) continue;
+      const weight = 1 - distance / radius;
+      positions[i] += inward.x * maxDentM * weight;
+      positions[i + 1] += inward.y * maxDentM * weight;
+      positions[i + 2] += inward.z * maxDentM * weight;
+    }
+
+    const normals = [];
+    B.VertexData.ComputeNormals(positions, indices, normals);
+    mesh.updateVerticesData(B.VertexBuffer.PositionKind, positions, false, false);
+    mesh.updateVerticesData(B.VertexBuffer.NormalKind, normals, false, false);
+    mesh.refreshBoundingInfo?.();
+    vehicle.bodyDeformationCount = (vehicle.bodyDeformationCount ?? 0) + 1;
+    runtime.events.emit("vehicle:bodyDeformed", {
+      vehicleId: vehicle.id,
+      impactEnergyJ,
+      impactPosition: impactWorldPosition.clone?.() ?? vehicle.position.clone(),
+      deformationCount: vehicle.bodyDeformationCount
+    });
+    return true;
+  }
+
+  function detachVehiclePart(vehicle, partName, impactEnergyJ) {
+    if (detachedParts.size >= 32 || vehicle.detachedPartNames.has(partName)) {
+      return { ok: false, reason: "debris-budget-or-duplicate-part" };
+    }
+
+    const dims = partName === "front-bumper"
+      ? { width: vehicle.profile.widthM * 0.86, height: 0.16, depth: 0.18 }
+      : { width: 0.6, height: 0.35, depth: 0.8 };
+    const part = B.MeshBuilder.CreateBox(`detached-${vehicle.id}-${partName}`, dims, scene);
+    part.position.copyFrom(vehicle.position);
+    part.position.y += vehicle.profile.wheelRadiusM + vehicle.profile.heightM * 0.25;
+    part.rotation.y = vehicle.yaw;
+    part.material = vehicle.material;
+    part.isPickable = true;
+    part.metadata = {
+      ...(part.metadata || {}),
+      isDetachedVehiclePart: true,
+      sourceVehicleId: vehicle.id,
+      partName,
+      detachedVelocity: vehicle.velocity.add(
+        getVehicleForward(vehicle).scale(Math.min(8, Math.sqrt(impactEnergyJ) / 180))
+      ),
+      lifetimeRemainingSeconds: 22,
+      halfHeightM: dims.height * 0.5
+    };
+    detachedParts.add(part);
+    vehicle.detachedPartNames.add(partName);
+
+    runtime.events.emit("vehicle:partDetached", {
+      vehicleId: vehicle.id,
+      partName,
+      impactEnergyJ,
+      position: part.position.clone()
+    });
+    return { ok: true, part };
+  }
+
+  function updateDetachedParts(dt) {
+    for (const part of [...detachedParts]) {
+      if (part.isDisposed()) {
+        detachedParts.delete(part);
+        continue;
+      }
+      const data = part.metadata;
+      const velocity = data?.detachedVelocity;
+      if (!(velocity instanceof B.Vector3)) {
+        detachedParts.delete(part);
+        part.dispose(false, true);
+        continue;
+      }
+
+      velocity.y -= gravity * dt;
+      part.position.addInPlace(velocity.scale(dt));
+      part.rotation.x += velocity.z * dt * 0.08;
+      part.rotation.z -= velocity.x * dt * 0.08;
+
+      const sampledGround = world?.sampleGroundHeight?.(part.position.x, part.position.z);
+      const groundY = Number.isFinite(sampledGround) ? sampledGround : 0;
+      if (part.position.y < groundY + data.halfHeightM) {
+        part.position.y = groundY + data.halfHeightM;
+        velocity.y = Math.abs(velocity.y) > 1.1 ? -velocity.y * 0.22 : 0;
+        velocity.x *= 0.72;
+        velocity.z *= 0.72;
+      }
+
+      data.lifetimeRemainingSeconds -= dt;
+      if (data.lifetimeRemainingSeconds <= 0) {
+        detachedParts.delete(part);
+        part.dispose(false, true);
+      }
+    }
+  }
+
+  function updateFuel(vehicle, speedMps, dt) {
+    if (vehicle.fuelLiters <= 0) {
+      vehicle.fuelLiters = 0;
+      vehicle.engineRunning = false;
+      return;
+    }
+
+    const rpmFactor = vehicle.engineRunning
+      ? vehicleClamp(vehicle.engineRPM / vehicle.profile.maxRpm, 0.1, 1)
+      : 0;
+
+    const loadFactor = 0.25 + vehicle.throttle * 1.45;
+    const leakRate = vehicle.fuelLeakActive
+      ? vehicle.fuelLeakLitersPerSecond
+      : 0;
+
+    const litersPerSecond =
+      0.00023 *
+      (vehicle.profile.massKg + (vehicle.cargoMassKg ?? 0) +
+        (vehicle.towingMassKg ?? 0)) / 1500 *
+      rpmFactor *
+      loadFactor;
+
+    vehicle.fuelLiters = Math.max(
+      0,
+      vehicle.fuelLiters - (litersPerSecond + leakRate) * dt
+    );
+
+    if (vehicle.fuelLiters <= 0) {
+      vehicle.engineRunning = false;
+
+      runtime.events.emit("vehicle:fuelEmpty", {
+        vehicleId: vehicle.id
+      });
+    }
+  }
+
+  function setControls(id, controls = {}) {
+    controls = controls && typeof controls === "object" ? controls : {};
+    const vehicle = vehicles.get(id);
+
+    if (!vehicle) {
+      return { ok: false, reason: "unknown-vehicle" };
+    }
+
+    if (vehicle.destroyed) {
+      return { ok: false, reason: "vehicle-destroyed" };
+    }
+
+    if (vehicle.lockState === "locked" && !vehicle.driverId) {
+      return { ok: false, reason: "vehicle-locked" };
+    }
+
+    vehicle.controlInput = {
+      throttle: vehicleClamp(vehicleFinite(controls.throttle), 0, 1),
+      brake: vehicleClamp(vehicleFinite(controls.brake), 0, 1),
+      steering: vehicleClamp(vehicleFinite(controls.steering), -1, 1),
+      handbrake: controls.handbrake === true,
+      gearDirection: controls.gearDirection === -1 ? -1 : 1
+    };
+
+    return { ok: true };
+  }
+
+  function startEngine(id) {
+    const vehicle = vehicles.get(id);
+    if (!vehicle) return { ok: false, reason: "unknown-vehicle" };
+
+    if (vehicle.destroyed || vehicle.fuelLiters <= 0 ||
+        vehicle.damage.engine > 0.88) {
+      return { ok: false, reason: "engine-unavailable" };
+    }
+
+    if (vehicle.lockState === "locked" && !vehicle.driverId) {
+      return { ok: false, reason: "vehicle-locked" };
+    }
+
+    vehicle.engineRunning = true;
+
+    runtime.events.emit("vehicle:engineStarted", {
+      vehicleId: id
+    });
+
+    return { ok: true };
+  }
+
+  function stopEngine(id) {
+    const vehicle = vehicles.get(id);
+    if (!vehicle) return { ok: false, reason: "unknown-vehicle" };
+
+    vehicle.engineRunning = false;
+    vehicle.throttle = 0;
+
+    runtime.events.emit("vehicle:engineStopped", {
+      vehicleId: id
+    });
+
+    return { ok: true };
+  }
+
+  function enterVehicle(vehicleId, characterId) {
+    const vehicle = vehicles.get(vehicleId);
+    const character = player?.getCharacter?.(characterId);
+
+    if (!vehicle || !character) {
+      return { ok: false, reason: "vehicle-or-character-not-found" };
+    }
+
+    if (vehicle.destroyed) {
+      return { ok: false, reason: "vehicle-destroyed" };
+    }
+
+    if (vehicle.driverId && vehicle.driverId !== characterId) {
+      return { ok: false, reason: "driver-seat-occupied" };
+    }
+
+    if (vehicle.lockState === "locked") {
+      return { ok: false, reason: "vehicle-locked" };
+    }
+
+    if (character.vehicleId) {
+      return { ok: false, reason: "character-already-in-vehicle" };
+    }
+
+    if (
+      B.Vector3.Distance(
+        character.position,
+        vehicle.position
+      ) > 4.8
+    ) {
+      return { ok: false, reason: "out-of-range" };
+    }
+
+    vehicle.driverId = characterId;
+    character.vehicleId = vehicleId;
+
+    runtime.events.emit("vehicle:entered", {
+      vehicleId,
+      characterId,
+      seat: "driver"
+    });
+
+    return { ok: true };
+  }
+
+  function exitVehicle(vehicleId, characterId) {
+    const vehicle = vehicles.get(vehicleId);
+    const character = player?.getCharacter?.(characterId);
+
+    if (!vehicle || !character || vehicle.driverId !== characterId) {
+      return { ok: false, reason: "not-driver" };
+    }
+
+    if (vehicle.velocity.length() > 3.3) {
+      return { ok: false, reason: "vehicle-moving-too-fast" };
+    }
+
+    const side = getVehicleRight(vehicle);
+    const position = vehicle.position.add(
+      side.scale(vehicle.profile.widthM * 0.5 + 0.9)
+    );
+
+    character.position.copyFrom(position);
+    character.vehicleId = null;
+    vehicle.driverId = null;
+
+    runtime.events.emit("vehicle:exited", {
+      vehicleId,
+      characterId,
+      position
+    });
+
+    return { ok: true, position };
+  }
+
+  function stealVehicle(vehicleId, characterId, options = {}) {
+    const vehicle = vehicles.get(vehicleId);
+    if (!vehicle) return { ok: false, reason: "unknown-vehicle" };
+    if (vehicle.destroyed) return { ok: false, reason: "vehicle-destroyed" };
+    if (vehicle.driverId) return { ok: false, reason: "vehicle-occupied" };
+
+    const character = characterId != null
+      ? player?.getCharacter?.(characterId)
+      : player?.getActiveCharacter?.();
+    if (!character?.position) {
+      return { ok: false, reason: "character-or-position-unavailable" };
+    }
+    if (B.Vector3.Distance(character.position, vehicle.position) > 4.8) {
+      return { ok: false, reason: "out-of-range" };
+    }
+    if (vehicle.lockState === "locked" && options.lockBypassCompleted !== true &&
+        options.method !== "key") {
+      return { ok: false, reason: "lock-bypass-required" };
+    }
+
+    vehicle.stolen = true;
+    vehicle.metadata.lastTheftBy = characterId;
+    vehicle.metadata.stolenFromOwner = vehicle.owned && vehicle.ownerId !== characterId;
+    if (vehicle.lockState === "locked" &&
+        options.lockBypassCompleted !== true && options.method !== "key") {
+      vehicle.windowBroken = options.breakWindow !== false;
+      if (vehicle.windowBroken) {
+        runtime.events.emit("vehicle:windowBroken", {
+          vehicleId,
+          characterId,
+          position: vehicle.position.clone()
+        });
+      }
+    }
+
+    if (vehicle.alarmArmed) {
+      vehicle.alarmTriggered = true;
+
+      runtime.events.emit("vehicle:alarmTriggered", {
+        vehicleId,
+        characterId,
+        position: vehicle.position.clone()
+      });
+    }
+
+    vehicle.lockState = "unlocked";
+
+    runtime.events.emit("vehicle:stolen", {
+      vehicleId,
+      characterId,
+      method: options.method ?? "forced-entry",
+      position: vehicle.position.clone()
+    });
+
+    runtime.events.emit("crime:vehicleTheft", {
+      actorId: characterId,
+      vehicleId,
+      position: vehicle.position.clone()
+    });
+
+    return { ok: true, stolen: true };
+  }
+
+  function beginVehicleHotwire(vehicleId, characterId) {
+    const vehicle = vehicles.get(vehicleId);
+    if (!vehicle) return { ok: false, reason: "unknown-vehicle" };
+    if (vehicle.destroyed) return { ok: false, reason: "vehicle-destroyed" };
+    if (vehicle.driverId) return { ok: false, reason: "vehicle-occupied" };
+    if (vehicle.lockState !== "locked") {
+      return { ok: false, reason: "vehicle-is-not-locked" };
+    }
+    const character = characterId != null
+      ? player?.getCharacter?.(characterId)
+      : player?.getActiveCharacter?.();
+    if (!character?.position) {
+      return { ok: false, reason: "character-or-position-unavailable" };
+    }
+    if (B.Vector3.Distance(character.position, vehicle.position) > 4.8) {
+      return { ok: false, reason: "out-of-range" };
+    }
+
+    let hash = 2166136261;
+    for (const char of `${vehicle.id}:${characterId}`) {
+      hash ^= char.charCodeAt(0);
+      hash = Math.imul(hash, 16777619);
+    }
+    const sequence = [0, 1, 2].map((_, i) => {
+      hash = Math.imul(hash ^ (i + 0x9e3779b9), 2246822519);
+      return (hash >>> 0) % 3;
+    });
+    const challengeId = `hotwire-${vehicle.id}-${nextHotwireChallengeId++}`;
+    vehicle.hotwireChallenge = {
+      challengeId,
+      characterId,
+      sequence,
+      nextIndex: 0,
+      expiresAt: elapsed + 12,
+      attempts: 0
+    };
+    runtime.events.emit("vehicle:hotwireChallengeStarted", {
+      vehicleId,
+      characterId,
+      challengeId,
+      stepCount: sequence.length,
+      expiresAt: vehicle.hotwireChallenge.expiresAt
+    });
+    return {
+      ok: true,
+      vehicleId,
+      challengeId,
+      stepCount: sequence.length,
+      sequence: sequence.map(index => ["left", "center", "right"][index]),
+      expiresAt: vehicle.hotwireChallenge.expiresAt,
+      instructions: "Tippe die drei angezeigten Kontakte innerhalb von zwölf Spielsekunden in der vorgegebenen Reihenfolge an."
+    };
+  }
+
+  function submitVehicleHotwireInput(vehicleId, characterId, challengeId, contactIndex) {
+    const vehicle = vehicles.get(vehicleId);
+    const challenge = vehicle?.hotwireChallenge;
+    if (!vehicle || !challenge) return { ok: false, reason: "no-active-hotwire-challenge" };
+    if (challenge.challengeId !== challengeId || challenge.characterId !== characterId) {
+      return { ok: false, reason: "challenge-mismatch" };
+    }
+    if (elapsed > challenge.expiresAt) {
+      vehicle.hotwireChallenge = null;
+      runtime.events.emit("vehicle:hotwireFailed", { vehicleId, characterId, reason: "timeout" });
+      return { ok: false, reason: "challenge-expired" };
+    }
+    const character = characterId != null
+      ? player?.getCharacter?.(characterId)
+      : player?.getActiveCharacter?.();
+    if (!character?.position || B.Vector3.Distance(character.position, vehicle.position) > 4.8) {
+      vehicle.hotwireChallenge = null;
+      return { ok: false, reason: "out-of-range-or-character-unavailable" };
+    }
+    challenge.attempts++;
+    if (!Number.isInteger(contactIndex) || contactIndex !== challenge.sequence[challenge.nextIndex]) {
+      vehicle.hotwireChallenge = null;
+      runtime.events.emit("vehicle:hotwireFailed", {
+        vehicleId, characterId, reason: "incorrect-contact-order", attempts: challenge.attempts
+      });
+      return { ok: false, reason: "incorrect-contact-order", attempts: challenge.attempts };
+    }
+    challenge.nextIndex++;
+    if (challenge.nextIndex < challenge.sequence.length) {
+      return { ok: true, complete: false, nextStep: challenge.nextIndex + 1, remainingSteps: challenge.sequence.length - challenge.nextIndex };
+    }
+
+    vehicle.hotwireChallenge = null;
+    const result = stealVehicle(vehicleId, characterId, {
+      lockBypassCompleted: true,
+      method: "hotwire",
+      breakWindow: false
+    });
+    if (!result.ok) return result;
+    runtime.events.emit("vehicle:hotwireSucceeded", { vehicleId, characterId });
+    return { ok: true, complete: true, stolen: true };
+  }
+
+  function repairVehicle(vehicleId, options = {}) {
+    const vehicle = vehicles.get(vehicleId);
+    if (!vehicle) return { ok: false, reason: "unknown-vehicle" };
+    if (vehicle.towedBy || vehicle.trailerId) {
+      return { ok: false, reason: "detach-trailer-before-repair" };
+    }
+    if (vehicle.destroyed && options.recoverDestroyed !== true) {
+      return { ok: false, reason: "recovery-required" };
+    }
+
+    vehicle.health = 100;
+    vehicle.destroyed = false;
+    vehicle.damage.engine = 0;
+    vehicle.damage.cooling = 0;
+    vehicle.damage.transmission = 0;
+    vehicle.damage.suspension.fill(0);
+    vehicle.damage.tireWear.fill(0);
+    vehicle.damage.bodyIntegrity = 1;
+    vehicle.fuelLeakActive = false;
+    vehicle.fuelLeakLitersPerSecond = 0;
+    if (options.refuel === true) vehicle.fuelLiters = vehicle.profile.fuelCapacityL;
+    vehicle.engineRunning = false;
+    vehicle.hotwireChallenge = null;
+
+    if (vehicle.bodyMesh && vehicle.bodyBasePositions) {
+      const indices = vehicle.bodyMesh.getIndices?.();
+      const normals = [];
+      if (indices && B.VertexData?.ComputeNormals) {
+        B.VertexData.ComputeNormals(vehicle.bodyBasePositions, indices, normals);
+        vehicle.bodyMesh.updateVerticesData(
+          B.VertexBuffer.PositionKind, vehicle.bodyBasePositions.slice(), false, false
+        );
+        vehicle.bodyMesh.updateVerticesData(B.VertexBuffer.NormalKind, normals, false, false);
+        vehicle.bodyMesh.refreshBoundingInfo?.();
+      }
+    }
+    vehicle.bodyDeformationCount = 0;
+
+    for (const part of [...detachedParts]) {
+      if (part.metadata?.sourceVehicleId === vehicleId) {
+        detachedParts.delete(part);
+        part.dispose(false, true);
+      }
+    }
+    vehicle.detachedPartNames.clear();
+
+    runtime.events.emit("vehicle:repaired", {
+      vehicleId,
+      repairedBy: options.repairedBy ?? null,
+      refueled: options.refuel === true,
+      position: vehicle.position.clone()
+    });
+    return { ok: true, vehicleId, health: vehicle.health, fuelLiters: vehicle.fuelLiters };
+  }
+
+  function damageVehicle(vehicleId, damage, options = {}) {
+    const vehicle = vehicles.get(vehicleId);
+
+    if (!vehicle) return { ok: false, reason: "unknown-vehicle" };
+
+    const amount = vehicleClamp(vehicleFinite(damage), 0, 100);
+
+    vehicle.health = Math.max(0, vehicle.health - amount);
+    vehicle.damage.bodyIntegrity = vehicleClamp(
+      vehicle.damage.bodyIntegrity - amount / 100,
+      0,
+      1
+    );
+
+    if (options.engineDamage) {
+      vehicle.damage.engine = vehicleClamp(
+        vehicle.damage.engine + amount / 100,
+        0,
+        1
+      );
+    }
+
+    if (options.fuelLeak) {
+      const wasLeaking = vehicle.fuelLeakActive;
+      vehicle.fuelLeakActive = true;
+      vehicle.fuelLeakLitersPerSecond = vehicleClamp(
+        vehicleFinite(options.leakRate, 0.012),
+        0,
+        0.1
+      );
+      if (!wasLeaking) {
+        runtime.events.emit("vehicle:fuelLeakStarted", {
+          vehicleId,
+          leakRateLitersPerSecond: vehicle.fuelLeakLitersPerSecond,
+          position: vehicle.position.clone()
+        });
+      }
+    }
+    if (Number.isFinite(options.position?.x) && Number.isFinite(options.position?.z)) {
+      const impactEnergyJ = amount * 9000;
+      const impactPosition = options.position instanceof B.Vector3
+        ? options.position
+        : new B.Vector3(
+            vehicleFinite(options.position.x),
+            vehicleFinite(options.position.y, vehicle.position.y),
+            vehicleFinite(options.position.z)
+          );
+      deformVehicleBody(vehicle, impactPosition, impactEnergyJ);
+      if (impactEnergyJ >= 210000) detachVehiclePart(vehicle, "front-bumper", impactEnergyJ);
+    }
+
+    if (vehicle.health <= 0) {
+      vehicle.destroyed = true;
+      vehicle.engineRunning = false;
+    }
+
+    const damageId = `vehicle-damage-${nextDamageId++}`;
+
+    runtime.events.emit("vehicle:damaged", {
+      damageId,
+      vehicleId,
+      damage: amount,
+      health: vehicle.health,
+      engineDamage: vehicle.damage.engine,
+      fuelLeak: vehicle.fuelLeakActive,
+      destroyed: vehicle.destroyed
+    });
+
+    return { ok: true, damageId };
+  }
+
+  function tuneVehicle(vehicleId, modifications = {}) {
+    modifications = modifications && typeof modifications === "object"
+      ? modifications
+      : {};
+    const vehicle = vehicles.get(vehicleId);
+    if (!vehicle) return { ok: false, reason: "unknown-vehicle" };
+
+    const tuning = vehicle.tuning;
+
+    if (modifications.engineFactor !== undefined) {
+      tuning.engineFactor = vehicleClamp(
+        modifications.engineFactor, 0.8, 1.65
+      );
+    }
+
+    if (modifications.brakeFactor !== undefined) {
+      tuning.brakeFactor = vehicleClamp(
+        modifications.brakeFactor, 0.75, 1.55
+      );
+    }
+
+    if (modifications.suspensionFactor !== undefined) {
+      tuning.suspensionFactor = vehicleClamp(
+        modifications.suspensionFactor, 0.65, 1.75
+      );
+    }
+
+    if (modifications.tireGripFactor !== undefined) {
+      tuning.tireGripFactor = vehicleClamp(
+        modifications.tireGripFactor, 0.65, 1.35
+      );
+    }
+
+    if (modifications.paintColor !== undefined) {
+      if (typeof modifications.paintColor !== "string" ||
+          !/^#[0-9a-f]{6}$/i.test(modifications.paintColor)) {
+        return { ok: false, reason: "invalid-paint-color" };
+      }
+      tuning.paintColor = modifications.paintColor;
+      const previousMaterial = vehicle.material;
+
+      const material = makeMaterial(
+        `vehicle-paint-${vehicle.id}-${elapsed}`,
+        modifications.paintColor,
+        0.32,
+        0.36
+      );
+
+      vehicle.material = material;
+      vehicle.bodyMesh.material = material;
+      if (previousMaterial && previousMaterial !== material) {
+        try { previousMaterial.dispose(); } catch {}
+      }
+    }
+
+    if (modifications.spoiler !== undefined) {
+      tuning.spoiler = Boolean(modifications.spoiler);
+    }
+
+    runtime.events.emit("vehicle:tuned", {
+      vehicleId,
+      tuning: { ...tuning }
+    });
+
+    return { ok: true, tuning: { ...tuning } };
+  }
+
+  function attachTrailer(vehicleId, trailerId, options = {}) {
+    const vehicle = vehicles.get(vehicleId);
+    const trailer = vehicles.get(trailerId);
+
+    if (!vehicle || !trailer) {
+      return { ok: false, reason: "vehicle-or-trailer-not-found" };
+    }
+
+    if (vehicleId === trailerId || vehicle.trailerId || trailer.trailerId ||
+        trailer.towedBy || vehicle.towedBy || vehicle.destroyed || trailer.destroyed) {
+      return { ok: false, reason: "invalid-trailer-connection" };
+    }
+
+    if (vehicle.classId === "trailer") {
+      return { ok: false, reason: "trailer-cannot-tow-another-trailer" };
+    }
+    const towingHitch = vehicle.position.add(
+      getVehicleForward(vehicle).scale(-vehicle.profile.lengthM * 0.43)
+    );
+    const trailerHitch = trailer.position.add(
+      getVehicleForward(trailer).scale(trailer.profile.lengthM * 0.43)
+    );
+    const hitchDistance = B.Vector3.Distance(towingHitch, trailerHitch);
+
+    if (hitchDistance > vehicleClamp(
+      vehicleFinite(options.maxDistanceM, 3.4), 0.5, 5
+    )) {
+      return { ok: false, reason: "hitch-out-of-range", hitchDistanceM: hitchDistance };
+    }
+
+    vehicle.trailerId = trailerId;
+    trailer.towedBy = vehicleId;
+    vehicle.towingMassKg = trailer.profile.massKg + (trailer.cargoMassKg ?? 0);
+    trailer.engineRunning = false;
+    trailer.controlInput = {
+      throttle: 0,
+      brake: 0,
+      steering: 0,
+      handbrake: false,
+      gearDirection: 1
+    };
+
+    activeTrailers.set(trailerId, {
+      towingVehicleId: vehicleId,
+      trailerVehicleId: trailerId,
+      maxArticulationRad: 0.72,
+      restLengthM: hitchDistance
+    });
+
+    runtime.events.emit("vehicle:trailerAttached", {
+      vehicleId,
+      trailerId
+    });
+
+    return { ok: true };
+  }
+
+  function detachTrailer(vehicleId, options = {}) {
+    const vehicle = vehicles.get(vehicleId);
+    if (!vehicle?.trailerId) return { ok: false, reason: "no-attached-trailer" };
+    if (vehicle.velocity.length() > vehicleClamp(vehicleFinite(options.maxSpeedMps, 1), 0.1, 5)) {
+      return { ok: false, reason: "vehicle-must-be-stationary" };
+    }
+    const trailerId = vehicle.trailerId;
+    const trailer = vehicles.get(trailerId);
+    activeTrailers.delete(trailerId);
+    vehicle.trailerId = null;
+    vehicle.towingMassKg = 0;
+    if (trailer) {
+      trailer.towedBy = null;
+      trailer.velocity.copyFrom(vehicle.velocity);
+      trailer.yaw = vehicle.yaw;
+      trailer.root.rotation.y = trailer.yaw;
+    }
+    runtime.events.emit("vehicle:trailerDetached", {
+      vehicleId,
+      trailerId,
+      position: trailer?.position.clone() ?? vehicle.position.clone()
+    });
+    return { ok: true, vehicleId, trailerId };
+  }
+
+  function refreshTowingMass(vehicle) {
+    if (!vehicle) return;
+    if (vehicle.trailerId) {
+      const trailer = vehicles.get(vehicle.trailerId);
+      vehicle.towingMassKg = trailer
+        ? trailer.profile.massKg + (trailer.cargoMassKg ?? 0)
+        : 0;
+    }
+    if (vehicle.towedBy) {
+      const towingVehicle = vehicles.get(vehicle.towedBy);
+      if (towingVehicle) {
+        towingVehicle.towingMassKg = vehicle.profile.massKg + (vehicle.cargoMassKg ?? 0);
+      }
+    }
+  }
+
+  function loadCargo(vehicleId, cargo = {}) {
+    const vehicle = vehicles.get(vehicleId);
+    if (!vehicle) return { ok: false, reason: "vehicle-not-found" };
+    if (!vehicle.cargoCapacityKg) return { ok: false, reason: "vehicle-has-no-cargo-bed" };
+    if (vehicle.destroyed || vehicle.velocity.length() > 0.75) {
+      return { ok: false, reason: "vehicle-must-be-stationary" };
+    }
+    const id = String(cargo.id ?? "").trim();
+    const massKg = vehicleFinite(cargo.massKg, -1);
+    if (!id || !Number.isFinite(massKg) || massKg <= 0) {
+      return { ok: false, reason: "cargo-id-and-positive-mass-required" };
+    }
+    if (vehicle.cargoItems.some(item => item.id === id)) {
+      return { ok: false, reason: "duplicate-cargo-id" };
+    }
+    if (vehicle.cargoMassKg + massKg > vehicle.cargoCapacityKg) {
+      return { ok: false, reason: "cargo-capacity-exceeded", remainingCapacityKg: vehicle.cargoCapacityKg - vehicle.cargoMassKg };
+    }
+    const dimensions = {
+      width: vehicleClamp(vehicleFinite(cargo.dimensions?.width, 0.7), 0.2, Math.max(0.2, vehicle.profile.widthM * 0.42)),
+      height: vehicleClamp(vehicleFinite(cargo.dimensions?.height, 0.7), 0.2, 2.4),
+      depth: vehicleClamp(vehicleFinite(cargo.dimensions?.depth, 0.7), 0.2, 1.8)
+    };
+    const slot = vehicle.cargoItems.length;
+    const columns = Math.max(1, Math.floor(vehicle.profile.widthM / (dimensions.width + 0.12)));
+    const row = Math.floor(slot / columns);
+    const column = slot % columns;
+    const localPosition = new B.Vector3(
+      (column - (columns - 1) / 2) * (dimensions.width + 0.12),
+      vehicle.profile.wheelRadiusM + vehicle.profile.heightM * 0.48 + dimensions.height * 0.38,
+      -vehicle.profile.lengthM * 0.16 + row * (dimensions.depth + 0.12)
+    );
+    const mesh = B.MeshBuilder.CreateBox(`cargo-${vehicle.id}-${id}`, dimensions, scene);
+    mesh.parent = vehicle.root;
+    mesh.position.copyFrom(localPosition);
+    const cargoMaterial = makeMaterial(
+      `cargo-material-${vehicle.id}-${id}`,
+      cargo.color ?? "#8b7657",
+      0.78,
+      0.04
+    );
+    mesh.material = cargoMaterial;
+    mesh.isPickable = true;
+    mesh.metadata = {
+      ...(mesh.metadata || {}),
+      vehicleId,
+      cargoId: id,
+      isVehicleCargo: true,
+      blocksPlayer: false
+    };
+    vehicle.visualParts.add(mesh);
+    const item = {
+      id,
+      name: String(cargo.name ?? id),
+      massKg,
+      secured: cargo.secured === true,
+      dimensions,
+      localPosition,
+      slideM: 0,
+      mesh,
+      material: cargoMaterial
+    };
+    vehicle.cargoItems.push(item);
+    vehicle.cargoMassKg += massKg;
+    refreshTowingMass(vehicle);
+    runtime.events.emit("vehicle:cargoLoaded", {
+      vehicleId,
+      cargoId: id,
+      massKg,
+      cargoMassKg: vehicle.cargoMassKg,
+      secured: item.secured
+    });
+    return { ok: true, cargoId: id, cargoMassKg: vehicle.cargoMassKg, remainingCapacityKg: vehicle.cargoCapacityKg - vehicle.cargoMassKg };
+  }
+
+  function secureCargo(vehicleId, cargoId, secured = true) {
+    const vehicle = vehicles.get(vehicleId);
+    const item = vehicle?.cargoItems.find(entry => entry.id === cargoId);
+    if (!item) return { ok: false, reason: "cargo-not-found" };
+    item.secured = secured === true;
+    runtime.events.emit("vehicle:cargoSecuredChanged", {
+      vehicleId,
+      cargoId,
+      secured: item.secured
+    });
+    return { ok: true, cargoId, secured: item.secured };
+  }
+
+  function unloadCargo(vehicleId, cargoId) {
+    const vehicle = vehicles.get(vehicleId);
+    if (!vehicle) return { ok: false, reason: "vehicle-not-found" };
+    if (vehicle.velocity.length() > 0.75) return { ok: false, reason: "vehicle-must-be-stationary" };
+    const index = vehicle.cargoItems.findIndex(item => item.id === cargoId);
+    if (index < 0) return { ok: false, reason: "cargo-not-found" };
+    const [item] = vehicle.cargoItems.splice(index, 1);
+    vehicle.cargoMassKg = Math.max(0, vehicle.cargoMassKg - item.massKg);
+    vehicle.visualParts.delete(item.mesh);
+    item.mesh.dispose(false, true);
+    item.material?.dispose?.();
+    refreshTowingMass(vehicle);
+    runtime.events.emit("vehicle:cargoUnloaded", {
+      vehicleId,
+      cargoId,
+      massKg: item.massKg,
+      cargoMassKg: vehicle.cargoMassKg
+    });
+    return { ok: true, cargoId, cargoMassKg: vehicle.cargoMassKg };
+  }
+
+  function startWinch(vehicleId, targetVehicleId, options = {}) {
+    const vehicle = vehicles.get(vehicleId);
+    const target = vehicles.get(targetVehicleId);
+    if (!vehicle || !target) return { ok: false, reason: "vehicle-not-found" };
+    if (vehicleId === targetVehicleId || vehicle.destroyed || target.destroyed) {
+      return { ok: false, reason: "invalid-winch-target" };
+    }
+    if (!vehicle.tuning.winchInstalled) return { ok: false, reason: "winch-not-installed" };
+    if (vehicle.velocity.length() > 2 || target.velocity.length() > 4) {
+      return { ok: false, reason: "vehicles-moving-too-fast" };
+    }
+    if (activeWinches.has(vehicleId)) return { ok: false, reason: "winch-already-active" };
+    const distanceM = B.Vector3.Distance(vehicle.position, target.position);
+    const maxLengthM = vehicleClamp(vehicleFinite(options.maxLengthM, 28), 3, 60);
+    if (distanceM > maxLengthM) return { ok: false, reason: "target-out-of-winch-range", distanceM, maxLengthM };
+    const winch = {
+      id: `winch-${nextWinchId++}`,
+      vehicleId,
+      targetVehicleId,
+      lineLengthM: Math.max(2, distanceM),
+      maxLengthM,
+      reelSpeedMps: vehicleClamp(vehicleFinite(options.reelSpeedMps, 1.2), 0.2, 3),
+      maxForceN: vehicleClamp(vehicleFinite(options.maxForceN, 22000), 2000, 50000),
+      createdAt: elapsed,
+      lastTensionEventAt: -Infinity
+    };
+    activeWinches.set(vehicleId, winch);
+    runtime.events.emit("vehicle:winchStarted", { ...winch });
+    return { ok: true, winchId: winch.id, lineLengthM: winch.lineLengthM, targetVehicleId };
+  }
+
+  function stopWinch(vehicleId, reason = "released") {
+    const winch = activeWinches.get(vehicleId);
+    if (!winch) return { ok: false, reason: "no-active-winch" };
+    activeWinches.delete(vehicleId);
+    runtime.events.emit("vehicle:winchStopped", {
+      winchId: winch.id,
+      vehicleId,
+      targetVehicleId: winch.targetVehicleId,
+      reason
+    });
+    return { ok: true };
+  }
+
+  function updateTrailerPhysics(dt) {
+    for (const connection of activeTrailers.values()) {
+      const vehicle = vehicles.get(connection.towingVehicleId);
+      const trailer = vehicles.get(connection.trailerVehicleId);
+
+      if (!vehicle || !trailer) continue;
+
+      const hitchOffset = getVehicleForward(vehicle).scale(
+        -vehicle.profile.lengthM * 0.43
+      );
+
+      const desiredHitch = vehicle.position.add(hitchOffset);
+
+      const trailerForward = getVehicleForward(trailer);
+      const trailerHitch = trailer.position.add(
+        trailerForward.scale(trailer.profile.lengthM * 0.43)
+      );
+
+      const error = desiredHitch.subtract(trailerHitch);
+      const distance = error.length();
+
+      const direction = distance > 0.0001
+        ? error.scale(1 / distance)
+        : B.Vector3.Zero();
+
+      const trailerMassKg = trailer.profile.massKg + (trailer.cargoMassKg ?? 0);
+      const correctingForce = direction.scale(
+        Math.min(15000, distance * trailerMassKg * 7.5)
+      );
+
+      trailer.velocity.addInPlace(
+        correctingForce.scale(dt / Math.max(1, trailerMassKg))
+      );
+
+      const relativeHeading = vehicle.yaw - trailer.yaw;
+
+      const angle = Math.atan2(
+        Math.sin(relativeHeading),
+        Math.cos(relativeHeading)
+      );
+
+      const allowed = connection.maxArticulationRad;
+
+      if (Math.abs(angle) > allowed) {
+        trailer.yaw = vehicle.yaw -
+          Math.sign(angle) * allowed;
+      }
+
+      trailer.velocity.scaleInPlace(
+        vehicleClamp(1 - dt * 0.035, 0.9, 1)
+      );
+
+      trailer.position.addInPlace(trailer.velocity.scale(dt));
+      trailer.root.position.copyFrom(trailer.position);
+      trailer.root.rotation.y = trailer.yaw;
+
+      const lateralAcceleration = Math.abs(vehicle.yawRateRadS * vehicle.velocity.length());
+      if (lateralAcceleration > 4.5 || Math.abs(angle) > allowed * 0.9) {
+        for (const item of [...trailer.cargoItems]) {
+          if (item.secured) continue;
+          item.slideM += Math.min(1.5, dt * (lateralAcceleration * 0.12 + Math.abs(angle)));
+          if (item.mesh && !item.mesh.isDisposed()) {
+            item.mesh.position.x += Math.sign(angle || vehicle.yawRateRadS || 1) * dt * Math.min(0.65, lateralAcceleration * 0.03);
+          }
+          if (item.slideM > trailer.profile.widthM * 0.48) {
+            const itemIndex = trailer.cargoItems.findIndex(entry => entry.id === item.id);
+            if (itemIndex >= 0) {
+              trailer.cargoItems.splice(itemIndex, 1);
+              trailer.cargoMassKg = Math.max(0, trailer.cargoMassKg - item.massKg);
+              trailer.visualParts.delete(item.mesh);
+              item.mesh?.dispose(false, true);
+              item.material?.dispose?.();
+              refreshTowingMass(trailer);
+              runtime.events.emit("vehicle:cargoDislodged", {
+                vehicleId: trailer.id,
+                towingVehicleId: vehicle.id,
+                cargoId: item.id,
+                massKg: item.massKg,
+                position: trailer.position.clone()
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  function updateWinches(dt) {
+    for (const [vehicleId, winch] of [...activeWinches.entries()]) {
+      const vehicle = vehicles.get(vehicleId);
+      const target = vehicles.get(winch.targetVehicleId);
+      if (!vehicle || !target || vehicle.destroyed || target.destroyed) {
+        stopWinch(vehicleId, "target-unavailable");
+        continue;
+      }
+      const delta = vehicle.position.subtract(target.position);
+      const distanceM = delta.length();
+      if (distanceM < 1.2) {
+        target.velocity.scaleInPlace(Math.exp(-dt * 1.8));
+        continue;
+      }
+      winch.lineLengthM = Math.max(1.2, winch.lineLengthM - winch.reelSpeedMps * dt);
+      const extension = Math.max(0, distanceM - winch.lineLengthM);
+      if (extension <= 0) continue;
+      const direction = delta.scale(1 / distanceM);
+      const tensionN = Math.min(winch.maxForceN, extension * 4200);
+      const targetMassKg = target.profile.massKg + (target.cargoMassKg ?? 0) + (target.towingMassKg ?? 0);
+      const sourceMassKg = vehicle.profile.massKg + (vehicle.cargoMassKg ?? 0) + (vehicle.towingMassKg ?? 0);
+      target.velocity.addInPlace(direction.scale(tensionN * dt / Math.max(1, targetMassKg)));
+      if (!vehicle.handbrake) {
+        vehicle.velocity.addInPlace(direction.scale(-tensionN * dt / Math.max(1, sourceMassKg) * 0.2));
+      }
+      if (elapsed - winch.lastTensionEventAt >= 0.5) {
+        winch.lastTensionEventAt = elapsed;
+        runtime.events.emit("vehicle:winchTension", {
+          winchId: winch.id,
+          vehicleId,
+          targetVehicleId: target.id,
+          tensionN,
+          lineLengthM: winch.lineLengthM,
+          distanceM
+        });
+      }
+    }
+  }
+
+  function buildRoadRoute(startPosition, endPosition) {
+    let rawPath = null;
+    let sourceDistanceM = null;
+
+    // Compatibility path for implementations that already provide a
+    // position-to-position routing adapter.
+    if (typeof world?.findRouteBetweenPositions === "function") {
+      const route = world.findRouteBetweenPositions(
+        startPosition,
+        endPosition,
+        { maxSnapDistance: 350, avoidBlocked: true }
+      );
+      rawPath = Array.isArray(route?.path)
+        ? route.path
+        : Array.isArray(route?.points) ? route.points : null;
+      sourceDistanceM = Number.isFinite(route?.distanceM) ? route.distanceM : null;
+      if (!route?.ok || !rawPath || rawPath.length < 2) {
+        rawPath = null;
+      }
+    }
+
+    // Native Module 5 road graph contract: snap both endpoints to driveable
+    // nodes, find a route across directed edges, then resolve node IDs to
+    // positions. A missing route is a failure, never a fabricated straight line.
+    if (!rawPath && typeof world?.findNearestRoadNode === "function" &&
+        typeof world?.findRoadRoute === "function" &&
+        typeof world?.getRoadNode === "function") {
+      const maxSnapDistanceM = 350;
+      const startNode = world.findNearestRoadNode(startPosition, maxSnapDistanceM);
+      const endNode = world.findNearestRoadNode(endPosition, maxSnapDistanceM);
+      if (!startNode?.id || !endNode?.id) {
+        return { ok: false, reason: "road-endpoint-could-not-snap-to-graph" };
+      }
+      const graphRoute = world.findRoadRoute(startNode.id, endNode.id, {
+        mode: "distance",
+        allowBlocked: false,
+        maxVisited: 100000
+      });
+      if (!graphRoute?.nodeIds?.length) {
+        return { ok: false, reason: "road-graph-route-unavailable" };
+      }
+      rawPath = graphRoute.nodeIds.map(nodeId => {
+        const node = world.getRoadNode(nodeId);
+        return node?.position ?? null;
+      });
+      sourceDistanceM = Number.isFinite(graphRoute.distance) ? graphRoute.distance : null;
+      if (rawPath.some(point => !point)) {
+        return { ok: false, reason: "road-graph-route-has-missing-node" };
+      }
+    }
+
+    if (!rawPath || rawPath.length < 1) {
+      return { ok: false, reason: "road-routing-service-unavailable-or-route-not-found" };
+    }
+
+    const waypoints = rawPath.map(point => new B.Vector3(
+      vehicleFinite(point?.x, NaN),
+      vehicleFinite(point?.y, 0),
+      vehicleFinite(point?.z, NaN)
+    ));
+    if (waypoints.some(point => !Number.isFinite(point.x) ||
+        !Number.isFinite(point.y) || !Number.isFinite(point.z))) {
+      return { ok: false, reason: "road-route-has-invalid-waypoint" };
+    }
+
+    // A one-node route is valid only when both endpoints snapped to that
+    // same road node; it must still be represented by a usable waypoint.
+    let measuredDistanceM = B.Vector3.Distance(startPosition, waypoints[0]) +
+      B.Vector3.Distance(endPosition, waypoints[waypoints.length - 1]);
+    for (let i = 1; i < waypoints.length; i++) {
+      measuredDistanceM += B.Vector3.Distance(waypoints[i - 1], waypoints[i]);
+    }
+    const distanceM = Number.isFinite(sourceDistanceM) && sourceDistanceM >= 0
+      ? sourceDistanceM + B.Vector3.Distance(startPosition, waypoints[0]) +
+        B.Vector3.Distance(endPosition, waypoints[waypoints.length - 1])
+      : measuredDistanceM;
+    return { ok: true, waypoints, distanceM };
+  }
+
+  function activateAutopilotRoute(vehicle, targetPosition, mode, requestedBy) {
+    const route = buildRoadRoute(vehicle.position, targetPosition);
+    if (!route.ok) return route;
+    vehicle.autopilot = {
+      mode,
+      route: route.waypoints,
+      waypointIndex: 0,
+      target: route.waypoints[route.waypoints.length - 1].clone(),
+      destination: route.waypoints[route.waypoints.length - 1].clone(),
+      requestedBy,
+      requestedAt: elapsed,
+      routeDistanceM: route.distanceM
+    };
+    vehicle.engineRunning = vehicle.fuelLiters > 0;
+    vehicle.controlInput = {
+      throttle: 0,
+      brake: 0,
+      steering: 0,
+      handbrake: false,
+      gearDirection: 1
+    };
+    return { ok: true, routeDistanceM: route.distanceM };
+  }
+
+  function requestDelivery(payload) {
+    const vehicleId = payload?.vehicleId;
+    const existing = vehicles.get(vehicleId);
+
+    if (!existing || !existing.owned) {
+      return Promise.resolve({
+        ok: false,
+        message: "Vehicle is not owned or is unavailable."
+      });
+    }
+
+    if (existing.driverId || existing.destroyed) {
+      return Promise.resolve({
+        ok: false,
+        message: "Vehicle cannot be delivered in its current state."
+      });
+    }
+
+    const active = player?.getActiveCharacter?.();
+    if (!active) {
+      return Promise.resolve({
+        ok: false,
+        message: "No active character is available."
+      });
+    }
+
+    const nearest = findRoadsidePoint(active.position, 120);
+
+    if (!nearest || nearest.blocked) {
+      return Promise.resolve({
+        ok: false,
+        message: "No suitable accessible road was found."
+      });
+    }
+
+    const destination = new B.Vector3(nearest.x, nearest.y ?? 0, nearest.z);
+    const autopilotResult = activateAutopilotRoute(
+      existing,
+      destination,
+      "delivery",
+      active.id
+    );
+    if (!autopilotResult.ok) {
+      return Promise.resolve({ ok: false, message: autopilotResult.reason });
+    }
+    existing.delivered = false;
+
+    runtime.events.emit("vehicle:deliveryRequested", {
+      vehicleId,
+      destination: destination.clone(),
+      routeDistanceM: autopilotResult.routeDistanceM
+    });
+
+    return Promise.resolve({
+      ok: true,
+      vehicleId,
+      destination,
+      routeDistanceM: autopilotResult.routeDistanceM,
+      message: "Vehicle delivery accepted; the vehicle is now navigating to the roadside pickup point."
+    });
+  }
+
+  function selectTaxiDestination(payload = {}) {
+    const taxi = vehicles.get(payload.vehicleId);
+    if (!taxi || taxi.classId !== "taxi") {
+      return { ok: false, reason: "taxi-not-found" };
+    }
+    if (taxi.taxiState !== "waitingForPassenger") {
+      return { ok: false, reason: "taxi-not-ready-for-destination" };
+    }
+    if (payload.characterId && taxi.taxiPassengerId &&
+        payload.characterId !== taxi.taxiPassengerId) {
+      return { ok: false, reason: "taxi-request-owner-mismatch" };
+    }
+    const destinationInput = payload.destination ?? payload.position;
+    if (!destinationInput || !Number.isFinite(destinationInput.x) ||
+        !Number.isFinite(destinationInput.z)) {
+      return { ok: false, reason: "destination-required" };
+    }
+    const destination = new B.Vector3(
+      destinationInput.x,
+      vehicleFinite(destinationInput.y, 0),
+      destinationInput.z
+    );
+    const result = activateAutopilotRoute(
+      taxi, destination, "taxiTrip", taxi.taxiPassengerId ?? payload.characterId ?? null
+    );
+    if (!result.ok) return result;
+
+    taxi.taxiState = "inTrip";
+    taxi.taxiDestination = destination.clone();
+    runtime.events.emit("taxi:destinationAccepted", {
+      vehicleId: taxi.id,
+      characterId: taxi.taxiPassengerId ?? payload.characterId ?? null,
+      destination: destination.clone(),
+      routeDistanceM: result.routeDistanceM
+    });
+    return { ok: true, vehicleId: taxi.id, routeDistanceM: result.routeDistanceM };
+  }
+
+  function requestPickup(payload) {
+    const active = player?.getActiveCharacter?.();
+
+    if (!active) {
+      return Promise.resolve({
+        ok: false,
+        message: "Active player unavailable."
+      });
+    }
+
+    const nearest = findRoadsidePoint(payload?.position ?? active.position, 120);
+
+    if (!nearest || nearest.blocked) {
+      return Promise.resolve({
+        ok: false,
+        message: "No reachable road-side pickup point."
+      });
+    }
+
+    const candidates = [...vehicles.values()].filter(vehicle =>
+      vehicle.classId === "taxi" &&
+      !vehicle.driverId &&
+      !vehicle.autopilot &&
+      !vehicle.destroyed &&
+      vehicle.velocity.length() < 0.3
+    );
+
+    if (!candidates.length) {
+      return Promise.resolve({
+        ok: false,
+        message: "No available taxi is registered."
+      });
+    }
+
+    const destination = new B.Vector3(nearest.x, nearest.y ?? 0, nearest.z);
+    const routedCandidates = candidates.map(taxi => ({
+      taxi,
+      route: buildRoadRoute(taxi.position, destination)
+    })).filter(candidate => candidate.route.ok);
+
+    if (!routedCandidates.length) {
+      return Promise.resolve({
+        ok: false,
+        message: "No available taxi has a valid route to the pickup point."
+      });
+    }
+
+    routedCandidates.sort((a, b) => a.route.distanceM - b.route.distanceM);
+    const taxi = routedCandidates[0].taxi;
+    taxi.taxiState = "enRouteToPickup";
+    taxi.taxiPassengerId = active.id;
+    const routeResult = activateAutopilotRoute(
+      taxi,
+      destination,
+      "taxiPickup",
+      active.id
+    );
+    if (!routeResult.ok) {
+      return Promise.resolve({ ok: false, message: routeResult.reason });
+    }
+
+    runtime.events.emit("taxi:requested", {
+      vehicleId: taxi.id,
+      pickup: destination.clone(),
+      characterId: active.id,
+      routeDistanceM: routeResult.routeDistanceM
+    });
+
+    return Promise.resolve({
+      ok: true,
+      vehicleId: taxi.id,
+      routeDistanceM: routeResult.routeDistanceM,
+      message: "A registered taxi has accepted the pickup request and is following the road route."
+    });
+  }
+
+  function getStatus() {
+    return {
+      ok: true,
+      activeVehicles: [...vehicles.values()].filter(v => !v.destroyed).length,
+      taxisAvailable: [...vehicles.values()].filter(v =>
+        v.classId === "taxi" && !v.driverId && !v.destroyed &&
+        !v.autopilot && (!v.taxiState || v.taxiState === "idle")
+      ).length
+    };
+  }
+
+  async function initialize() {
+    if (disposed) return { ok: false, reason: "vehicle-system-disposed" };
+    if (initialized) return { ok: true };
+    refreshDependencies();
+
+    serviceDisposers.push(
+      runtime.services.register("vehicles", {
+        createVehicle,
+        getVehicle,
+        getOwnedVehicles,
+        getStatus,
+        requestDelivery,
+        requestPickup,
+
+        setControls,
+        startEngine,
+        stopEngine,
+        enterVehicle,
+        exitVehicle,
+        stealVehicle,
+        damageVehicle,
+        repairVehicle,
+        tuneVehicle,
+        beginVehicleHotwire,
+        submitVehicleHotwireInput,
+
+        attachTrailer,
+        detachTrailer,
+        loadCargo,
+        unloadCargo,
+        secureCargo,
+        startWinch,
+        stopWinch,
+        getSnapshot: () => ({
+          count: vehicles.size,
+          active: [...vehicles.values()].filter(v => !v.destroyed).length,
+          moving: [...vehicles.values()].filter(v => v.velocity.length() > 2).length,
+          trailers: activeTrailers.size,
+          activeWinches: activeWinches.size,
+          cargoItems: [...vehicles.values()].reduce((sum, v) => sum + v.cargoItems.length, 0),
+          detachedParts: detachedParts.size
+        })
+      })
+    );
+
+    serviceDisposers.push(
+      runtime.services.register("vehiclePhysics", {
+        createVehicle,
+        getVehicle,
+        setControls,
+        damageVehicle,
+        repairVehicle,
+        tuneVehicle,
+        beginVehicleHotwire,
+        submitVehicleHotwireInput,
+        attachTrailer,
+        detachTrailer,
+        loadCargo,
+        unloadCargo,
+        secureCargo,
+        startWinch,
+        stopWinch,
+        sampleSurface,
+        engineTorqueFraction
+      })
+    );
+
+    eventDisposers.push(
+      runtime.events.on("vehicle:controlInput", payload => {
+        if (payload?.vehicleId) {
+          setControls(payload.vehicleId, payload.controls ?? {});
+        }
+      })
+    );
+
+    serviceDisposers.push(
+      runtime.services.register("taxi", {
+        requestPickup,
+        getStatus,
+        selectDestination: selectTaxiDestination
+      })
+    );
+
+    eventDisposers.push(
+      runtime.events.on("taxi:destinationSelected", payload => {
+        if (!payload) return;
+        const result = selectTaxiDestination(payload);
+        runtime.events.emit("taxi:destinationSelectionResolved", {
+          vehicleId: payload.vehicleId ?? null,
+          characterId: payload.characterId ?? null,
+          result
+        });
+      })
+    );
+
+    eventDisposers.push(
+      runtime.events.on("player:characterChanged", () => {
+        // Character switching does not implicitly transfer a vehicle driver.
+      })
+    );
+
+    createVehicle({
+      id: "world-taxi-001",
+      classId: "taxi",
+      position: { x: 15, y: 0, z: 22 },
+      owned: false,
+      source: "initial-world-fleet"
+    });
+
+    createVehicle({
+      id: "world-sedan-001",
+      classId: "sedan",
+      position: { x: 23, y: 0, z: 30 },
+      owned: false,
+      source: "initial-world-fleet"
+    });
+
+    createVehicle({
+      id: "player-sedan-001",
+      classId: "sedan",
+      position: { x: -248, y: 0, z: 308 },
+      ownerId: "lucia",
+      owned: true,
+      source: "player-garage"
+    });
+
+    initialized = true;
+    logger?.info?.("Vehicle dynamics initialized.", {
+      vehicleCount: vehicles.size,
+      vehicleClasses: Object.keys(VEHICLE_CLASSES)
+    });
+
+    return { ok: true };
+  }
+
+  function start() {
+    if (disposed) return { ok: false, reason: "vehicle-system-disposed" };
+    if (!initialized) return { ok: false, reason: "vehicle-system-not-initialized" };
+    running = true;
+    return { ok: true };
+  }
+
+  function update(context = {}) {
+    if (!initialized || !running || disposed) return;
+
+    const dt = vehicleClamp(
+      vehicleFinite(context?.simulationDeltaSeconds ?? context?.gameDeltaSeconds),
+      0,
+      0.05
+    );
+
+    elapsed += dt;
+
+    for (const vehicle of vehicles.values()) {
+      if (vehicle.destroyed) continue;
+      if (vehicle.towedBy) continue;
+
+      if (!vehicle.controlInput) {
+        vehicle.controlInput = {
+          throttle: 0,
+          brake: 0,
+          steering: 0,
+          handbrake: false,
+          gearDirection: 1
+        };
+      }
+
+      if (vehicle.autopilot) {
+        const route = vehicle.autopilot.route ?? [vehicle.autopilot.target];
+        while (vehicle.autopilot && vehicle.autopilot.waypointIndex < route.length - 1) {
+          const waypoint = route[vehicle.autopilot.waypointIndex];
+          if (B.Vector3.Distance(vehicle.position, waypoint) >= 4.2) break;
+          vehicle.autopilot.waypointIndex++;
+        }
+        const target = route[Math.min(
+          vehicle.autopilot.waypointIndex ?? 0,
+          route.length - 1
+        )] ?? vehicle.autopilot.target;
+        const delta = target.subtract(vehicle.position);
+        const distance = Math.hypot(delta.x, delta.z);
+        const finalWaypoint = (vehicle.autopilot.waypointIndex ?? 0) >= route.length - 1;
+
+        if (finalWaypoint && distance < 3.5) {
+          vehicle.controlInput.throttle = 0;
+          vehicle.controlInput.brake = 0.8;
+          const mode = vehicle.autopilot.mode;
+          const requestedBy = vehicle.autopilot.requestedBy ?? null;
+          vehicle.autopilot = null;
+          vehicle.delivered = mode === "delivery";
+
+          const arrivalPayload = {
+            vehicleId: vehicle.id,
+            mode,
+            requestedBy,
+            position: vehicle.position.clone()
+          };
+          if (mode === "taxiPickup") {
+            vehicle.taxiState = "waitingForPassenger";
+            runtime.events.emit("taxi:arrived", arrivalPayload);
+          } else if (mode === "taxiTrip") {
+            vehicle.taxiState = "idle";
+            vehicle.taxiDestination = null;
+            vehicle.taxiPassengerId = null;
+            runtime.events.emit("taxi:tripCompleted", arrivalPayload);
+          } else if (mode === "delivery") {
+            runtime.events.emit("vehicle:deliveryArrived", arrivalPayload);
+            runtime.events.emit("vehicle:delivered", arrivalPayload);
+          }
+        } else {
+          const desiredHeading = Math.atan2(delta.x, delta.z);
+
+          let headingError = desiredHeading - vehicle.yaw;
+
+          while (headingError > Math.PI) headingError -= 2 * Math.PI;
+          while (headingError < -Math.PI) headingError += 2 * Math.PI;
+
+          vehicle.controlInput.steering =
+            vehicleClamp(headingError * 1.65, -1, 1);
+
+          const desiredSpeed = Math.min(
+            vehicle.profile.maxSpeedMps * 0.28,
+            Math.sqrt(Math.max(0, distance) * 1.9)
+          );
+
+          const forwardSpeed = B.Vector3.Dot(
+            vehicle.velocity,
+            getVehicleForward(vehicle)
+          );
+
+          vehicle.controlInput.throttle =
+            forwardSpeed < desiredSpeed ? 0.42 : 0.04;
+
+          vehicle.controlInput.brake =
+            forwardSpeed > desiredSpeed + 3 ? 0.25 : 0;
+        }
+      }
+
+      const metrics = updateVehicleHandling(
+        vehicle,
+        vehicle.controlInput,
+        dt
+      );
+
+      updateAutomaticGear(vehicle, metrics.forwardSpeed, dt);
+
+      // Fuel leakage and engine failure are persistent vehicle state.
+      if (vehicle.fuelLiters <= 0) vehicle.engineRunning = false;
+    }
+
+    updateTrailerPhysics(dt);
+    updateWinches(dt);
+    updateDetachedParts(dt);
+  }
+
+  function stop() {
+    running = false;
+    return { ok: true };
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    running = false;
+
+    for (const off of eventDisposers.splice(0)) {
+      try { off(); } catch {}
+    }
+
+    for (const off of serviceDisposers.splice(0)) {
+      try { off(); } catch {}
+    }
+
+    for (const vehicle of vehicles.values()) {
+      try { entities?.unregister?.(vehicle.id); } catch {}
+      for (const item of vehicle.cargoItems ?? []) {
+        try { item.material?.dispose?.(); } catch {}
+      }
+      for (const part of vehicle.visualParts) {
+        if (!part.isDisposed()) part.dispose(false, true);
+      }
+
+      vehicle.root.dispose(false, true);
+
+      try { vehicle.material.dispose(); } catch {}
+    }
+
+    for (const part of detachedParts) {
+      try { part.dispose(); } catch {}
+    }
+
+    vehicles.clear();
+    activeTrailers.clear();
+    activeWinches.clear();
+    detachedParts.clear();
+  }
+
+  return Object.freeze({
+    initialize,
+    start,
+    update,
+    stop,
+    dispose,
+
+    createVehicle,
+    getVehicle,
+    getOwnedVehicles,
+    setControls,
+    enterVehicle,
+    exitVehicle,
+    repairVehicle,
+    beginVehicleHotwire,
+    submitVehicleHotwireInput
+  });
+}
